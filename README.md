@@ -1,7 +1,7 @@
 # PlaguardsV2: Static Deobfuscation and IOC Triage for Blue Teams.
 
-<p align="center" width="100">
-<img src="plaguardsv2/PlagWeb/static/assets/plaguard-logo.png" width="180">
+<p align="center">
+<img src="plaguardsv2/PlagWeb/static/assets/PlaguardsBanner.png" width="620" alt="PlaguardsV2">
 </p>
 
 ---
