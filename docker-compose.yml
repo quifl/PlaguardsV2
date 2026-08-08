@@ -1,0 +1,12 @@
+services:
+  app:
+    build: .
+    container_name: plaguardsv2
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      PLAGUARDSV2_DB: /app/data/plaguardsv2.db
+    volumes:
+      - ./data:/app/data

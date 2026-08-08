@@ -1,0 +1,149 @@
+{% extends "base.html" %}
+{% block title %}Analysis #{{ analysis.id }} - PlaguardsV2{% endblock %}
+{% block content %}
+<div class="result-header">
+  <div>
+    <div class="section-title"><h2>Analysis #{{ analysis.id }}</h2></div>
+    <p class="lede">{{ analysis.filename }}{% if analysis.truncated %} <span class="badge badge-medium">input truncated</span>{% endif %}</p>
+  </div>
+  <div class="result-actions">
+    <label class="check" title="Print indicator values black-on-black so they aren't readable at a glance">
+      <input type="checkbox" id="reportIocs" />
+      <span class="check-box"></span>
+      <span class="check-label">Redact IOC values</span>
+    </label>
+    <a class="btn btn-outline" target="_blank" id="viewReportBtn" data-busy-link="Building your report…"
+       data-base="{{ url_for('view_report', analysis_id=analysis.id) }}"
+       href="{{ url_for('view_report', analysis_id=analysis.id) }}"><i class="bi bi-eye"></i> View Report</a>
+    <a class="btn btn-custom" id="downloadReportBtn" data-busy-link="Building your report…"
+       data-base="{{ url_for('download_report', analysis_id=analysis.id) }}"
+       href="{{ url_for('download_report', analysis_id=analysis.id) }}"><i class="bi bi-download"></i> Download Report</a>
+  </div>
+</div>
+
+<div class="split">
+  <section class="pane">
+    <h3>Deobfuscated Script</h3>
+    {% if analysis.pass_log %}
+    <details class="pass-log-details" open>
+      <summary>{{ analysis.pass_log|length }} deobfuscation transform(s) applied</summary>
+      <ul>
+        {% for entry in analysis.pass_log %}<li>{{ entry }}</li>{% endfor %}
+      </ul>
+    </details>
+    {% elif analysis.findings %}
+    <p class="muted">No further static rewrites could be safely applied - see Findings for obfuscation techniques detected but not fully resolved automatically.</p>
+    {% else %}
+    <p class="muted">No transforms were needed - input already appears to be plaintext.</p>
+    {% endif %}
+    <pre class="code-block">{{ analysis.deobfuscated }}</pre>
+
+    {% if resolved_display %}
+    <details class="pass-log-details" open>
+      <summary>{{ resolved_display|length }} variable value(s) statically resolved</summary>
+      <p class="muted" style="font-size:12px;margin:6px 0 0;">
+        Reconstructed by folding literals through concatenation, encoding and string
+        operations &mdash; nothing was executed to obtain these. Indicators are defanged.
+      </p>
+      <table class="resolved-table">
+        <tr><th>Variable</th><th>Resolved value</th></tr>
+        {% for row in resolved_display %}
+        <tr>
+          <td class="varname mono">${{ row.name }}</td>
+          <td class="varval mono">{{ row.value }}
+            {% if row.decoded %}
+            {# The resolved value is itself still a stage - show what it holds. #}
+            <span class="varval-decoded">decoded from {{ row.decoded_how }}: {{ row.decoded }}</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </table>
+    </details>
+    {% endif %}
+
+    <details class="original-details">
+      <summary>Show original input</summary>
+      <pre class="code-block">{{ analysis.original }}</pre>
+    </details>
+  </section>
+
+  <section class="pane">
+    <h3>Findings ({{ analysis.findings|length }})</h3>
+    {% if not analysis.findings %}
+      <p class="muted">No IOCs or suspicious signatures were detected.</p>
+    {% else %}
+    <div class="bulk-triage">
+      <span class="bulk-triage-label">Mark all as:</span>
+      <button class="tbtn tbtn-threat" data-bulk-status="confirmed_threat">Threat</button>
+      <button class="tbtn tbtn-fp" data-bulk-status="false_positive">False Positive</button>
+      <button class="tbtn tbtn-unknown" data-bulk-status="unreviewed">Reset</button>
+    </div>
+    <div class="bulk-triage">
+      <span class="bulk-triage-label">{{ analysis.findings|length }} finding(s)</span>
+      <button class="tbtn" data-expand-all="1"><i class="bi bi-chevron-expand"></i> Expand all</button>
+      <button class="tbtn" data-expand-all="0"><i class="bi bi-chevron-contract"></i> Collapse all</button>
+    </div>
+    {% endif %}
+    {% for f in analysis.findings %}
+    <details class="finding-card sev-border-{{ f.severity }}" data-finding-id="{{ f.id }}"
+             {% if f.severity == 'high' %}open{% endif %}>
+      <summary class="finding-summary">
+        <span class="badge sev-badge-{{ f.severity }}">{{ f.severity }}</span>
+        <span class="finding-type">{{ f.type }}</span>
+        <span class="finding-value mono">{{ f.value }}</span>
+        <span class="finding-chevron"><i class="bi bi-chevron-down"></i></span>
+      </summary>
+
+      <div class="finding-body">
+        {% if f.mitre %}<div class="finding-meta"><span class="mitre">{{ f.mitre|join(", ") }}</span>{% if f.defanged %} <i class="muted">value was defanged in source</i>{% endif %}</div>{% endif %}
+        {% if f.description %}<div class="finding-desc">{{ f.description }}</div>{% endif %}
+        {% if f.context %}<pre class="code-block code-inline">{{ f.context }}</pre>{% endif %}
+
+        {% set shown = f.intel_display %}
+        {% if shown %}
+        <details class="intel-block">
+          <summary class="intel-summary">
+            <span class="intel-badge badge-{{ f.intel_summary.verdict }}">{{ f.intel_summary.text }}</span>
+            {% if f.intel_summary.note %}<span class="intel-detail">{{ f.intel_summary.note }}</span>{% endif %}
+            <span class="intel-more">details <i class="bi bi-chevron-down"></i></span>
+          </summary>
+          <div class="intel-detail-list">
+            {# Each row opens that provider's own page for this indicator, so
+               the full picture is one click away rather than a manual search. #}
+            {% for r in shown %}
+            {% if r.url %}
+            <a class="intel-row is-link" href="{{ r.url }}" target="_blank" rel="noopener noreferrer"
+               data-no-busy title="Open {{ r.label }} for this indicator">
+              <span class="intel-badge badge-{{ r.verdict }}">{{ r.label }}: {{ r.verdict.replace("_", " ") }}</span>
+              {% if r.detail %}<span class="intel-detail">{{ r.detail }}</span>{% endif %}
+              <i class="bi bi-box-arrow-up-right row-out"></i>
+            </a>
+            {% else %}
+            <div class="intel-row">
+              <span class="intel-badge badge-{{ r.verdict }}">{{ r.label }}: {{ r.verdict.replace("_", " ") }}</span>
+              {% if r.detail %}<span class="intel-detail">{{ r.detail }}</span>{% endif %}
+            </div>
+            {% endif %}
+            {% endfor %}
+          </div>
+        </details>
+        {% endif %}
+
+        <div class="triage-row">
+          <span class="triage-label">Analyst verdict:</span>
+          <span class="triage-status" data-current="{{ f.triage_status }}">{{ f.triage_status.replace("_", " ") }}</span>
+          <div class="triage-buttons">
+            <button class="tbtn tbtn-threat" data-status="confirmed_threat">Confirm Threat</button>
+            <button class="tbtn tbtn-fp" data-status="false_positive">False Positive</button>
+            <button class="tbtn tbtn-unknown" data-status="unknown">Unknown</button>
+          </div>
+        </div>
+      </div>
+    </details>
+    {% endfor %}
+  </section>
+</div>
+
+<script>window.ANALYSIS_ID = {{ analysis.id }};</script>
+{% endblock %}

@@ -1,0 +1,126 @@
+{% extends "base.html" %}
+{% block title %}PlaguardsV2 - New Analysis{% endblock %}
+{% block content %}
+<div class="section-title"><h2>New Analysis</h2></div>
+
+<div class="pocolo-tip">
+  <img src="{{ url_for('static', filename='assets/pocolo.png') }}" alt="Pocolo" />
+  <div class="bubble">
+    Hi, I'm <strong>Pocolo</strong>! Paste a script or drop a single IOC below &mdash; I'll only
+    <em>read</em> it, never run it.
+    <div class="pocolo-actions">
+      <a class="link-chip" href="#" data-start-tour><i class="bi bi-play-circle"></i> Take the guided tour</a>
+      <a class="link-chip" href="{{ url_for('run_example') }}" data-busy-link="Running the example…"><i class="bi bi-lightning-charge"></i> Run the example script</a>
+      <a class="link-chip" href="{{ url_for('tutorial') }}"><i class="bi bi-book"></i> Read the Tutorial</a>
+    </div>
+  </div>
+</div>
+
+<div class="tool-grid">
+  <div class="tool-card">
+    <h3><i class="bi bi-file-earmark-code"></i> Analyze a Script</h3>
+    <p class="lede">Nothing is executed &mdash; only static analysis and, optionally, IOC lookups against your configured providers.</p>
+
+    <form method="post" action="{{ url_for('do_analyze') }}" enctype="multipart/form-data" class="analyze-form">
+      {# Paste on top, files under it. Both are kept short enough that Analyze
+         still lands above the fold. #}
+      <textarea name="script_text" rows="6" placeholder="Paste script contents here..."></textarea>
+
+      <div class="form-stack">
+        <div class="drop-zone" data-drop-zone>
+          <i class="bi bi-cloud-arrow-up drop-icon"></i>
+          <label class="file-picker">
+            <input type="file" name="file" multiple accept=".ps1,.txt,.vbs,.js,.bat,.cmd,.log,.zip" />
+            <span class="file-btn"><i class="bi bi-paperclip"></i> Choose files</span>
+          </label>
+          <span class="file-name">No file chosen</span>
+          <span class="file-hint">&hellip;or drop files anywhere on this page &mdash;
+            .ps1 .txt .vbs .js .bat .cmd .log or .zip,
+            up to {{ batch_limits.entries }} files, {{ batch_limits.entry_mb }}&nbsp;MB each.</span>
+        </div>
+
+        {# Always on show so the choice is visible before you pick anything;
+           it only takes effect once more than one file is submitted. #}
+        <fieldset class="batch-choice" id="batchChoice">
+          <legend><i class="bi bi-files"></i> More than one file?</legend>
+          <div class="segmented">
+            <label class="seg">
+              <input type="radio" name="batch_report" value="separate" checked />
+              <span class="seg-btn">
+                <i class="bi bi-file-earmark-text"></i>
+                <span class="seg-title">Separate reports</span>
+                <span class="seg-note">one PDF per file, in History</span>
+              </span>
+            </label>
+            <label class="seg">
+              <input type="radio" name="batch_report" value="combined" />
+              <span class="seg-btn">
+                <i class="bi bi-file-earmark-pdf"></i>
+                <span class="seg-title">Combined report</span>
+                <span class="seg-note">one document, every file</span>
+              </span>
+            </label>
+          </div>
+          <p class="batch-note" id="batchNote">Choose files above and this decides what you get back.</p>
+        </fieldset>
+      </div>
+
+      <div class="submit-row">
+        <button type="submit" class="btn btn-custom"><i class="bi bi-play-fill"></i> Analyze</button>
+        <label class="check">
+          <input type="checkbox" name="skip_intel" />
+          <span class="check-box"></span>
+          <span class="check-label">Skip threat-intel lookups (offline / no API keys)</span>
+        </label>
+      </div>
+    </form>
+  </div>
+
+  <div class="tool-card">
+    <h3><i class="bi bi-search"></i> Quick IOC Lookup</h3>
+    <p class="lede">One IP, domain, URL or hash, checked straight against your configured providers.</p>
+
+    <form method="post" action="{{ url_for('do_lookup') }}" class="lookup-form"
+          data-busy="Checking the indicator…" data-busy-note="Querying your configured threat-intel providers.">
+      <input type="text" name="ioc_value" placeholder="e.g. 203.0.113.10, example.com, a file hash, or AgentTesla" value="{{ lookup.value if lookup else '' }}" required />
+      {# Leave it on auto and the type is worked out from the value; pick one
+         to force it, which is the only way to reach a malware signature. #}
+      <select name="ioc_type" class="lookup-type" aria-label="Indicator type">
+        {% for value, label in lookup_types %}
+        <option value="{{ value }}" {{ 'selected' if lookup and lookup.requested == value }}>{{ label }}</option>
+        {% endfor %}
+      </select>
+      <button type="submit" class="btn btn-custom">Look up</button>
+    </form>
+
+    {% if lookup %}
+    <div class="lookup-results">
+      {% if lookup.note %}<p class="lookup-note">{{ lookup.note }}</p>{% endif %}
+      {% if lookup.type is none %}
+      {% elif not lookup.results %}
+        <p class="muted">No configured provider returned data for this {{ lookup.type }} ({{ lookup.value }}). Add API keys in <a href="{{ url_for('settings') }}">Settings</a> to enable lookups.</p>
+      {% else %}
+        <p class="muted">Results for {{ lookup.type.replace("_", " ") }} <span class="mono">{{ lookup.value }}</span>:</p>
+        {# A row links to the provider's own page for this indicator where one
+           exists, so "why?" is one click away rather than a manual search. #}
+        {% for r in lookup.results %}
+        {% if r.url %}
+        <a class="lookup-result-row is-link" href="{{ r.url }}" target="_blank" rel="noopener noreferrer"
+           data-no-busy title="Open {{ r.label }} for this indicator">
+          <span class="intel-badge badge-{{ r.verdict }}">{{ r.label }}: {{ r.verdict }}</span>
+          <span class="intel-detail">{{ r.detail }}</span>
+          <i class="bi bi-box-arrow-up-right row-out"></i>
+        </a>
+        {% else %}
+        <div class="lookup-result-row">
+          <span class="intel-badge badge-{{ r.verdict }}">{{ r.label }}: {{ r.verdict }}</span>
+          <span class="intel-detail">{{ r.detail }}</span>
+        </div>
+        {% endif %}
+        {% endfor %}
+      {% endif %}
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

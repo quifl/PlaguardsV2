@@ -1,0 +1,9 @@
+Flask>=3.0,<4
+click>=8.1,<9
+requests>=2.32,<3
+Jinja2>=3.1,<4
+xhtml2pdf>=0.2.16,<0.3
+pypdf>=4.0,<7          # stitches report front matter onto the body
+matplotlib>=3.8,<4
+gunicorn>=22.0,<23; platform_system != "Windows"
+waitress>=3.0,<4

@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block title %}History - PlaguardsV2{% endblock %}
+{% block content %}
+<div class="section-title"><h2>History</h2></div>
+<p class="lede">Showing up to the {{ history_limit }} most recent analyses (set in Settings &rarr; General). Older ones are pruned automatically.</p>
+
+{% if not analyses %}
+  <p class="muted">No analyses yet. <a href="{{ url_for('index') }}">Run your first one</a>.</p>
+{% else %}
+<form id="bulkForm" method="post" data-busy-note="Rendering PDFs - this can take a moment for several analyses.">
+  <div class="bulk-bar">
+    <label class="check"><input type="checkbox" id="selectAll" /><span class="check-box"></span><span class="check-label">Select all</span></label>
+    <span class="count" id="selectedCount">0 selected</span>
+    <button type="submit" formaction="{{ url_for('bulk_export') }}" class="btn btn-outline" id="exportBtn" disabled
+            data-busy="Building your zip…" data-busy-download="1"><i class="bi bi-file-earmark-zip"></i> Export as zip</button>
+    <button type="submit" formaction="{{ url_for('bulk_export') }}" name="combined" value="1" class="btn btn-outline" id="combinedBtn" disabled
+            data-busy="Building the combined report…" data-busy-new-tab="1"><i class="bi bi-file-earmark-pdf"></i> Combined report</button>
+    <button type="submit" formaction="{{ url_for('bulk_delete') }}" class="btn btn-danger" id="deleteBtn" disabled data-busy="Deleting…"
+            onclick="return confirm('Delete the selected analyses? This cannot be undone.');"><i class="bi bi-trash"></i> Delete Selected</button>
+  </div>
+
+  <table class="history-table">
+    <tr><th class="checkbox-cell"></th><th>ID</th><th>File</th><th>When</th><th>Findings</th><th>High severity</th><th></th></tr>
+    {% for a in analyses %}
+    <tr>
+      <td class="checkbox-cell"><label class="check"><input type="checkbox" name="analysis_id" value="{{ a.id }}" class="row-check" {{ 'checked' if a.id in selected }} /><span class="check-box"></span></label></td>
+      <td>#{{ a.id }}</td>
+      <td>{{ a.filename }}</td>
+      <td>{{ a.created_at|int|timestamp_to_str }}</td>
+      <td>{{ a.finding_count }}</td>
+      <td>{{ a.high_count or 0 }}</td>
+      <td><a class="link-chip" href="{{ url_for('view_analysis', analysis_id=a.id) }}"
+             target="_blank" rel="noopener"><i class="bi bi-box-arrow-up-right"></i> View</a></td>
+    </tr>
+    {% endfor %}
+  </table>
+</form>
+{% endif %}
+{% endblock %}
+{% block scripts %}
+<script>
+document.addEventListener("DOMContentLoaded", () => {
+  const selectAll = document.getElementById("selectAll");
+  const rowChecks = document.querySelectorAll(".row-check");
+  const exportBtn = document.getElementById("exportBtn");
+  const deleteBtn = document.getElementById("deleteBtn");
+  const countEl = document.getElementById("selectedCount");
+
+  const updateState = () => {
+    const checked = document.querySelectorAll(".row-check:checked").length;
+    countEl.textContent = `${checked} selected`;
+    exportBtn.disabled = checked === 0;
+    const combinedBtn = document.getElementById("combinedBtn");
+    if (combinedBtn) combinedBtn.disabled = checked === 0;
+    deleteBtn.disabled = checked === 0;
+  };
+
+  if (selectAll) {
+    selectAll.addEventListener("change", () => {
+      rowChecks.forEach((c) => { c.checked = selectAll.checked; });
+      updateState();
+    });
+  }
+  rowChecks.forEach((c) => c.addEventListener("change", updateState));
+  updateState();
+});
+</script>
+{% endblock %}

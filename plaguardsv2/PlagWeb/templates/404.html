@@ -1,0 +1,6 @@
+{% extends "base.html" %}
+{% block title %}Not found - PlaguardsV2{% endblock %}
+{% block content %}
+<div class="section-title"><h2>Analysis not found</h2></div>
+<p class="muted"><a href="{{ url_for('index') }}">Start a new analysis</a> or check <a href="{{ url_for('history') }}">history</a>.</p>
+{% endblock %}

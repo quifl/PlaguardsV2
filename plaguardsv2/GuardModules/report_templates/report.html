@@ -1,0 +1,578 @@
+<html>
+<head>
+<meta charset="utf-8" />
+<style>
+  /* Front matter (cover, contents, disclaimer) is unnumbered and the body
+     restarts at page 1. xhtml2pdf cannot offset <pdf:pagenumber>, so the two
+     halves are rendered as separate documents (`part` = front / body) and
+     stitched together afterwards; each then counts its own pages. Rendering
+     with no `part` at all still produces the whole report in one pass, with
+     the body on the `numbered` page template. */
+  {% set part = part | default("all") %}
+  @page {
+    size: A4;
+    margin: 1.7cm 1.4cm {% if part == "body" %}2.0cm{% else %}1.6cm{% endif %} 1.4cm;
+    {% if watermark_data_uri %}background-image: url("{{ watermark_data_uri }}");{% endif %}
+    {% if part == "body" %}
+    @frame footer_frame {
+      -pdf-frame-content: footerContent;
+      left: 1.4cm; right: 1.4cm; bottom: 0.9cm; height: 1cm;
+    }
+    {% endif %}
+  }
+  @page numbered {
+    size: A4;
+    margin: 1.7cm 1.4cm 2.0cm 1.4cm;
+    {% if watermark_data_uri %}background-image: url("{{ watermark_data_uri }}");{% endif %}
+    @frame footer_frame {
+      -pdf-frame-content: footerContent;
+      left: 1.4cm; right: 1.4cm; bottom: 0.9cm; height: 1cm;
+    }
+  }
+  #footerContent {
+    font-size: 7.4pt;
+    color: #55627a;
+    border-top: 1px solid #d3dae4;
+    padding-top: 3px;
+  }
+  #footerContent .fl { text-align: left; }
+  #footerContent .fr { text-align: right; }
+
+  body {
+    font-family: Helvetica, Arial, sans-serif;
+    font-size: 9.2pt;
+    line-height: 1.45;
+    color: #000000;
+  }
+
+  h1 { font-size: 17pt; color: #000000; margin: 0 0 2px 0; }
+  h2 {
+    font-size: 12pt;
+    color: #000000;
+    border-bottom: 2px solid #c81e4a;
+    padding-bottom: 3px;
+    margin: 16px 0 8px 0;
+  }
+  h3 { font-size: 10pt; color: #000000; margin: 10px 0 4px 0; }
+
+  .subtitle { color: #000000; font-size: 9pt; margin-bottom: 10px; }
+  /* Long indicators and script text must wrap inside their cell rather than
+     running off the edge of the table / page. */
+  .mono {
+    font-family: Courier, monospace;
+    word-wrap: break-word;
+    white-space: pre-wrap;
+  }
+  .muted { color: #000000; }
+
+  /* Redacted indicator: printed black-on-black so the value is present in
+     the document but not readable at a glance. */
+  .redacted {
+    background-color: #000000;
+    color: #000000;
+    padding: 0 2px;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+    white-space: pre-wrap;
+  }
+
+  /* ---------- cover ----------
+     Built as a single table cell holding only inline content. xhtml2pdf
+     propagates a container block's box properties (padding, borders) onto
+     each child block, so a padded <div> full of <div>s renders one child
+     per page. One cell + <br/> keeps the cover to exactly one page. */
+  /* One cell, inline content only. xhtml2pdf gives each child *block* of a
+     padded/bordered container its own box (and here, its own page), so the
+     cover must not contain nested tables or divs. */
+  table.cover-t { width: 100%; border-collapse: collapse; page-break-after: always; }
+  td.cover-c {
+    background-color: #ffffff;
+    text-align: center;
+    padding: 96px 40px 96px 40px;
+    border-top: 11px solid #c81e4a;
+    border-bottom: 11px solid #c81e4a;
+  }
+  .cover-logo { width: 360px; height: 360px; border-radius: 220px; border: 8px solid #c81e4a; }
+  .cover-title { font-size: 51pt; font-weight: bold; color: #000000; }
+  .cover-title .v2 { color: #c81e4a; }
+  .cover-kicker {
+    font-size: 20pt; color: #55627a; font-style: italic; letter-spacing: 0.5pt;
+  }
+  table.cover-info { width: 76%; border-collapse: collapse; }
+  table.cover-info td {
+    border: 1px solid #d3dae4; padding: 12px 16px; font-size: 16.5pt; color: #000000;
+  }
+  table.cover-info td.ck {
+    background-color: #eff2f7; width: 36%; font-weight: bold;
+  }
+  /* The counts live in the same table as the metadata rather than a
+     separate strip floating below it. */
+  table.cover-info td.cn {
+    text-align: center; font-size: 24pt; font-weight: bold; padding: 8px 4px;
+  }
+  table.cover-info td.cn .cl {
+    display: block; font-size: 11pt; font-weight: normal; color: #000000;
+  }
+
+  /* ---------- meta ---------- */
+  table.meta { width: 100%; border-collapse: collapse; margin-bottom: 6px; }
+  table.meta td { border: 1px solid #d3dae4; padding: 4px 7px; font-size: 8.6pt; }
+  table.meta td.k { background-color: #eff2f7; color: #000000; width: 21%; font-weight: bold; }
+
+  /* ---------- summary ---------- */
+  table.summary { width: 100%; border-collapse: collapse; margin: 6px 0; }
+  table.summary td {
+    border: 1px solid #d3dae4; text-align: center;
+    padding: 4px 4px 5px 4px; font-size: 8.4pt; color: #000000;
+  }
+  /* The count sat in its own block box with default line-height, which left
+     a tall empty band between the number and its label. */
+  table.summary td.n { font-size: 16pt; font-weight: bold; padding-bottom: 0; line-height: 1.15; }
+  table.summary td.l { padding-top: 0; border-top: none; line-height: 1.15; font-size: 8pt; }
+  table.summary td.n { border-bottom: none; }
+  table.summary td.s-high, table.cover-info td.s-high       { background-color: #f6dbe0; }
+  table.summary td.s-medium, table.cover-info td.s-medium { background-color: #fbeed3; }
+  table.summary td.s-low, table.cover-info td.s-low          { background-color: #d9efe2; }
+  table.summary td.s-info, table.cover-info td.s-info       { background-color: #e6e9f0; }
+  .sev-high { color: #a81f36; }
+  .sev-medium { color: #9a6207; }
+  .sev-low { color: #1c6b3f; }
+  .sev-info { color: #000000; }
+
+  table.charts { width: 100%; border-collapse: collapse; margin-top: 4px; }
+  table.charts td { text-align: center; vertical-align: top; padding: 2px; }
+  table.charts img { max-width: 100%; }
+
+  /* ---------- findings overview ---------- */
+  table.grid { width: 100%; border-collapse: collapse; margin-top: 4px; }
+  table.grid th {
+    background-color: #0d1a2b; color: #ffffff; text-align: left;
+    padding: 5px 6px; font-size: 8.1pt; font-weight: bold;
+  }
+  table.grid td {
+    border: 1px solid #d3dae4; padding: 5px 6px; font-size: 8.3pt; vertical-align: top;
+  }
+
+  /* Status is carried by the cell's own fill rather than a highlighted
+     run of text, which reads as a marker-pen scribble in print. */
+  td.c-high    { background-color: #f6dbe0; color: #000000; font-weight: bold; }
+  td.c-medium  { background-color: #fbeed3; color: #000000; font-weight: bold; }
+  td.c-low     { background-color: #d9efe2; color: #000000; font-weight: bold; }
+  td.c-info    { background-color: #e6e9f0; color: #000000; }
+
+  td.c-malicious      { background-color: #f2c2cb; color: #000000; font-weight: bold; }
+  td.c-suspicious     { background-color: #fbeed3; color: #000000; font-weight: bold; }
+  td.c-clean          { background-color: #d9efe2; color: #000000; }
+  td.c-unknown        { background-color: #fce7e9; color: #000000; }
+  td.c-not_applicable { background-color: #f1f3f7; color: #000000; }
+  td.c-error          { background-color: #fce7e9; color: #000000; }
+  td.c-not_checked    { background-color: #f6f8fb; color: #000000; }
+  td.c-info           { background-color: #e6e9f0; color: #000000; }
+
+  td.c-confirmed_threat { background-color: #f6dbe0; color: #000000; font-weight: bold; }
+  td.c-false_positive   { background-color: #d9efe2; color: #000000; }
+  td.c-unreviewed       { background-color: #f1f3f7; color: #000000; }
+  td.c-unknown_verdict  { background-color: #eef1f6; color: #000000; }
+
+  .group-head {
+    padding: 7px 11px; margin: 18px 0 8px 0; font-size: 10.5pt; font-weight: bold;
+    color: #000000; border-left: 6px solid #8a94a6;
+  }
+  /* xhtml2pdf does not collapse or honour margins between sibling blocks
+     reliably, so the breathing space before each severity band is an explicit
+     spacer rather than a margin. */
+  .group-gap { font-size: 11pt; line-height: 2.2; }
+  .group-high   { background-color: #f6dbe0; border-left-color: #a81f36; }
+  .group-medium { background-color: #fbeed3; border-left-color: #9a6207; }
+  .group-low    { background-color: #d9efe2; border-left-color: #1c6b3f; }
+  .group-info   { background-color: #e6e9f0; border-left-color: #5c6883; }
+
+  /* ---------- contents / disclaimer ---------- */
+  /* Contents: chapters flush left in bold, their sections stepped in under
+     them, page numbers in a right-aligned column. */
+  table.toc { width: 100%; border-collapse: collapse; margin-top: 12px; }
+  table.toc td { font-size: 10.6pt; vertical-align: top; color: #000000; }
+  table.toc td.tn { width: 52px; padding: 5px 8px; }
+  table.toc td.tp { width: 44px; padding: 5px 8px; text-align: right; }
+
+  /* A chapter row gets air above it and a hairline, so the sections beneath
+     it read as belonging to it. */
+  table.toc tr.lvl1 td { padding: 11px 8px 5px 8px; font-weight: bold; font-size: 11.4pt; }
+  table.toc tr.lvl1 td.tt { border-bottom: 1px solid #d3dae4; }
+  table.toc tr.lvl2 td { padding: 4px 8px; font-size: 10pt; }
+  table.toc tr.lvl2 td.tn { padding-left: 22px; color: #55627a; }
+  table.toc tr.lvl2 td.tt { padding-left: 26px; }
+  table.toc tr.lvl2 td.tp { color: #55627a; }
+  a.toc-link { color: #000000; text-decoration: none; }
+  /* ---------- disclaimer notice ----------
+     A bordered instrument, so the page reads as a formal warning rather than
+     six loose paragraphs. Built from tables: xhtml2pdf gives each child block
+     of a padded container its own box, so nested divs would fragment it. */
+  table.notice { width: 100%; border-collapse: collapse; margin-top: 14px; }
+  td.notice-c {
+    border: 2.5px solid #c81e4a;
+    background-color: #ffffff;
+    padding: 0 0 18px 0;
+    text-align: center;
+  }
+  .notice-band {
+    display: block;
+    background-color: #c81e4a;
+    color: #ffffff;
+    font-size: 11.5pt;
+    font-weight: bold;
+    letter-spacing: 0.7pt;
+    padding: 9px 12px;
+    margin-bottom: 14px;
+  }
+  table.dclauses { width: 90%; border-collapse: collapse; }
+  table.dclauses td {
+    border: none;
+    font-size: 9.6pt;
+    line-height: 1.5;
+    color: #000000;
+    padding: 7px 6px;
+    text-align: left;
+    vertical-align: top;
+  }
+  table.dclauses td.dc-n { width: 26px; font-weight: bold; }
+  .notice-foot {
+    display: block;
+    font-size: 8.6pt;
+    font-style: italic;
+    color: #46536a;
+    padding: 14px 26px 0 26px;
+  }
+
+  .sub { display: block; font-size: 7.2pt; color: #46536a; font-weight: normal; }
+
+  /* ---------- per-finding detail ---------- */
+  table.detail {
+    width: 100%; border-collapse: collapse; margin-bottom: 9px;
+    page-break-inside: avoid;
+  }
+  table.detail td { border: 1px solid #d3dae4; padding: 4px 7px; font-size: 8.4pt; vertical-align: top; }
+  table.detail td.dk { background-color: #f2f5f9; color: #000000; width: 19%; font-weight: bold; }
+  /* A context snippet is usually one unbroken blob; it arrives pre-split into
+     lines that fit, because xhtml2pdf will not break a long token itself. */
+  table.detail td.ctx { font-size: 7.6pt; line-height: 1.35; }
+  table.detail tr.head td {
+    background-color: #0d1a2b; color: #ffffff; font-weight: bold; font-size: 8.8pt;
+  }
+  table.detail tr.head td .idx { color: #9fb0c9; }
+
+  /* ---------- code ---------- */
+  .code {
+    background-color: #f6f8fb; border: 1px solid #d3dae4; padding: 9px 11px;
+    font-family: Courier, monospace; font-size: 7.6pt; color: #000000;
+    line-height: 1.35; white-space: pre-wrap;
+    word-wrap: break-word; overflow-wrap: break-word;
+  }
+  /* Every table cell must be allowed to break a long token, otherwise a
+     base64 blob or single-line script runs past the page edge. */
+  table.grid td, table.detail td, table.meta td { word-wrap: break-word; overflow-wrap: break-word; }
+  /* Fixed layout stops a long unbreakable token from widening a column past
+     the page edge - the cell wraps instead. */
+  table.grid, table.detail, table.meta, table.code-t { table-layout: fixed; }
+
+  ul.log { margin: 4px 0 0 15px; padding: 0; }
+  ul.log li { font-size: 8.4pt; margin-bottom: 2px; }
+
+  .note {
+    padding: 7px 9px; background-color: #fcf5e4; border: 1px solid #e3cfa2;
+    font-size: 8.1pt; color: #000000; margin-top: 10px;
+  }
+  .foot { margin-top: 16px; font-size: 7.6pt; color: #000000; text-align: center; }
+  .pb { page-break-before: always; }
+</style>
+</head>
+<body>
+
+{% if part != "front" %}
+<div id="footerContent">
+  <table style="width:100%;border-collapse:collapse;">
+    <tr>
+      <td class="fl" style="border:none;">{{ tagline }}</td>
+      <td class="fr" style="border:none;">Page <pdf:pagenumber> of <pdf:pagecount></td>
+    </tr>
+  </table>
+</div>
+{% endif %}
+
+{% if part != "body" %}
+<table class="cover-t"><tr><td class="cover-c">
+  {% if logo_data_uri %}<img src="{{ logo_data_uri }}" class="cover-logo" /><br/><br/>{% endif %}
+  <span class="cover-title">Plaguards<span class="v2">V2</span></span><br/>
+  <span class="cover-kicker">Static deobfuscation &amp; indicator triage</span><br/><br/><br/>
+
+  <table class="cover-info" align="center">
+    <tr><td class="ck">Source</td><td colspan="4">{{ source_line }}</td></tr>
+    <tr>
+      <td class="ck">Date and Time</td>
+      <td colspan="4">{{ generated_date }}<br/>{{ generated_time }}</td>
+    </tr>
+    {% if analyst_name %}<tr><td class="ck">Prepared by</td><td colspan="4">{{ analyst_name }}</td></tr>{% endif %}
+    <tr><td class="ck">Total findings</td><td colspan="4">{{ total_findings }}</td></tr>
+    <tr>
+      <td class="ck">Findings by severity</td>
+      <td class="cn s-high sev-high">{{ counts.high }}<span class="cl">High</span></td>
+      <td class="cn s-medium sev-medium">{{ counts.medium }}<span class="cl">Medium</span></td>
+      <td class="cn s-low sev-low">{{ counts.low }}<span class="cl">Low</span></td>
+      <td class="cn s-info sev-info">{{ counts.info }}<span class="cl">Info</span></td>
+    </tr>
+  </table>
+
+</td></tr></table>
+
+<h1>Contents</h1>
+<table class="toc">
+  {% for entry in toc %}
+  <tr class="lvl{{ entry.level }}">
+    <td class="tn">{{ entry.number }}</td>
+    <td class="tt"><a class="toc-link" href="#{{ entry.anchor }}">{{ entry.title }}</a></td>
+    <td class="tp">{{ entry.page }}</td>
+  </tr>
+  {% endfor %}
+</table>
+
+{#- The link targets have to exist in whichever document holds the contents,
+    or the renderer drops the annotation entirely. PlagReport repoints them at
+    the real body pages once the two halves are merged. -#}
+{% for entry in toc %}<a name="{{ entry.anchor }}"></a>{% endfor %}
+
+<h1 class="pb">Disclaimer &amp; scope</h1>
+
+{# A formal notice rather than loose prose: a bordered instrument with a
+   banner, numbered clauses and an acknowledgement line, laid over the
+   watermark that every page carries. #}
+<table class="notice"><tr><td class="notice-c">
+  <span class="notice-band">IMPORTANT &mdash; READ BEFORE RELYING ON THIS DOCUMENT</span>
+
+  <table class="dclauses">
+    <tr>
+      <td class="dc-n">1.</td>
+      <td class="dc-t"><b>This report is an investigative aid, not a verdict.</b> It records what static analysis could determine about the submitted input. It does not establish that the sample is malicious, nor that it is safe.</td>
+    </tr>
+    <tr>
+      <td class="dc-n">2.</td>
+      <td class="dc-t"><b>Nothing was executed.</b> Deobfuscation is performed by rewriting literal values only. No part of the input was run, and no network connection was made on its behalf.</td>
+    </tr>
+    <tr>
+      <td class="dc-n">3.</td>
+      <td class="dc-t"><b>Deobfuscation is best-effort.</b> Techniques that depend on runtime state cannot be resolved statically. The transform log records exactly what was applied; anything not listed there was left untouched.</td>
+    </tr>
+    <tr>
+      <td class="dc-n">4.</td>
+      <td class="dc-t"><b>Threat-intelligence results reflect third-party data at the time of the lookup</b> and may change without notice. Indicators that are reserved or non-routable are marked as such rather than being reported as clean.</td>
+    </tr>
+    <tr>
+      <td class="dc-n">5.</td>
+      <td class="dc-t"><b>Indicator values are defanged</b> (1[.]2[.]3[.]4, hxxp://) so that they cannot be clicked or resolved by accident. Refang them before use in any tooling.</td>
+    </tr>
+    <tr>
+      <td class="dc-n">6.</td>
+      <td class="dc-t"><b>The analyst verdict is authoritative.</b> Severity reflects the technique observed, not confirmed impact. The reviewer's decision on each finding is what this report treats as its conclusion.</td>
+    </tr>
+  </table>
+
+  <span class="notice-foot">Issued by PlaguardsV2</span>
+</td></tr></table>
+{% endif %}
+
+{% if part != "front" %}
+<h1 {% if part == "all" %}style="-pdf-next-page: numbered; page-break-before: always;"{% endif %}>Analysis Summary</h1>
+<div class="subtitle">Static deobfuscation &amp; indicator triage &middot; generated {{ generated_at }}</div>
+
+<table class="meta">
+  <tr>
+    <td class="k">Source</td><td>{{ source_line }}</td>
+    <td class="k">Analysis ID</td><td>{{ analysis.id if analysis.id is not none else "not persisted" }}</td>
+  </tr>
+  <tr>
+    <td class="k">Total findings</td><td>{{ total_findings }}</td>
+    <td class="k">Input truncated</td><td>{{ "Yes" if analysis.truncated else "No" }}</td>
+  </tr>
+  <tr>
+    <td class="k">SHA-256 of input</td>
+    <td class="mono" colspan="3" style="font-size:7.4pt;">{{ original_sha256 }}</td>
+  </tr>
+</table>
+
+<table class="summary">
+  <tr>
+    <td class="n s-high sev-high">{{ counts.high }}</td>
+    <td class="n s-medium sev-medium">{{ counts.medium }}</td>
+    <td class="n s-low sev-low">{{ counts.low }}</td>
+    <td class="n s-info sev-info">{{ counts.info }}</td>
+  </tr>
+  <tr>
+    <td class="l s-high">High</td>
+    <td class="l s-medium">Medium</td>
+    <td class="l s-low">Low</td>
+    <td class="l s-info">Info</td>
+  </tr>
+</table>
+
+{% if severity_chart %}
+<table class="charts">
+  <tr>
+    <td style="width:290pt;"><h3>Findings by severity</h3><img src="{{ severity_chart }}" /></td>
+    <td style="width:210pt;"><h3>Analyst triage status</h3><img src="{{ triage_chart }}" /></td>
+  </tr>
+</table>
+{% endif %}
+
+<h2>Indicators at a glance</h2>
+{% if not analysis.findings %}
+<p>No indicators or suspicious signatures were detected.</p>
+{% else %}
+<table class="grid">
+  <tr>
+    <th style="width:5%;">#</th>
+    <th style="width:10%;">Severity</th>
+    <th style="width:14%;">Type</th>
+    <th style="width:37%;">Value</th>
+    <th style="width:19%;">Threat intel</th>
+    <th style="width:15%;">Verdict</th>
+  </tr>
+  {% for f in analysis.findings %}
+  <tr>
+    <td>{{ f.n }}</td>
+    <td class="c-{{ f.severity }}">{{ f.severity_label }}</td>
+    <td>{{ f.type_label }}</td>
+    <td class="mono">{% if redact_iocs %}<span class="redacted">{% for part in f.display_value_parts %}{{ part }}{% if not loop.last %}<br/>{% endif %}{% endfor %}</span>{% else %}{% for part in f.display_value_parts %}{{ part }}{% if not loop.last %}<br/>{% endif %}{% endfor %}{% endif %}</td>
+    <td class="c-{{ f.intel_summary.verdict }}">
+      {{ f.intel_summary.text }}
+      {% if f.intel_summary.note %}<span class="sub">{{ f.intel_summary.note }}</span>{% endif %}
+    </td>
+    <td class="c-{{ f.triage_status }}">{{ f.verdict_label }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% endif %}
+
+<div class="note">
+  This report is an investigative aid, not a verdict. Deobfuscation is best-effort and
+  threat-intel results reflect third-party data at query time. The analyst verdict column
+  is the authoritative determination for each finding.
+  Indicator values are defanged (<span class="mono">1[.]2[.]3[.]4</span>,
+  <span class="mono">hxxp://</span>) so they cannot be clicked or resolved by accident.
+  {% if redact_iocs %}
+  Indicator values are additionally <b>redacted</b> in this copy: they are printed
+  black-on-black, so they stay in the document but are not readable at a glance.
+  Select the text to reveal a value.
+  {% endif %}
+</div>
+
+{% if grouped_findings %}
+<h2 class="pb">Finding details</h2>
+{% for group in grouped_findings %}
+{% if not loop.first %}<div class="group-gap">&nbsp;</div>{% endif %}
+<div class="group-head group-{{ group.severity }}">{{ group.label }} severity &mdash; {{ group.entries|length }} finding(s)</div>
+{% for f in group.entries %}
+<table class="detail">
+  <tr class="head">
+    <td colspan="2" class="mono"><span class="idx">#{{ f.n }}</span> &nbsp; {{ f.type_label }} &mdash;
+      {% if redact_iocs %}<span class="redacted">{% for part in f.display_value_parts %}{{ part }}{% if not loop.last %}<br/>{% endif %}{% endfor %}</span>{% else %}{% for part in f.display_value_parts %}{{ part }}{% if not loop.last %}<br/>{% endif %}{% endfor %}{% endif %}</td>
+  </tr>
+  <tr>
+    <td class="dk">Severity</td>
+    <td class="c-{{ f.severity }}">{{ f.severity_label }}{% if f.defanged %} &nbsp;<i>value was defanged in source</i>{% endif %}</td>
+  </tr>
+  {% if f.description %}
+  <tr><td class="dk">What it means</td><td>{{ f.description }}</td></tr>
+  {% endif %}
+  {% if f.mitre_described %}
+  <tr><td class="dk">MITRE ATT&amp;CK</td><td>{{ f.mitre_described|join("; ") }}</td></tr>
+  {% endif %}
+  {% if f.context_parts %}
+  <tr>
+    <td class="dk">Seen in context</td>
+    <td class="mono ctx">…{% for part in f.context_parts %}{{ part }}<br/>{% endfor %}…</td>
+  </tr>
+  {% endif %}
+  {% if f.intel_display %}
+  {% for r in f.intel_display %}
+  <tr>
+    {# One label cell spanning every provider row, rather than a stack of
+       empty ones down the left. #}
+    {% if loop.first %}<td class="dk" rowspan="{{ f.intel_display|length }}">Threat intel</td>{% endif %}
+    <td class="c-{{ r.verdict }}">
+      <b>{{ r.label }}</b> &mdash; {{ r.verdict.replace("_", " ") }}
+      {% if r.detail %}<span class="sub">{{ r.detail }}</span>{% endif %}
+    </td>
+  </tr>
+  {% endfor %}
+  {% else %}
+  <tr>
+    <td class="dk">Threat intel</td>
+    <td class="c-{{ f.intel_summary.verdict }}">
+      {{ f.intel_summary.text }}
+      <span class="sub">{{ f.intel_summary.note or "No provider is configured for this indicator type." }}</span>
+    </td>
+  </tr>
+  {% endif %}
+  {% if f.scope_note %}
+  <tr>
+    <td class="dk">Note</td>
+    <td>{{ f.scope_note }}</td>
+  </tr>
+  {% endif %}
+  <tr>
+    <td class="dk">Analyst verdict</td>
+    <td class="c-{{ f.triage_status }}">{{ f.verdict_label }}{% if f.triage_note %} &nbsp;{{ f.triage_note }}{% endif %}</td>
+  </tr>
+</table>
+{% endfor %}
+{% endfor %}
+{% endif %}
+
+<h2 class="pb">Deobfuscation</h2>
+{% if analysis.pass_log %}
+<h3>Transforms applied ({{ analysis.pass_log|length }})</h3>
+<table class="grid">
+  <tr><th style="width:44%;">Transform</th><th>What this technique is</th></tr>
+  {% for row in pass_log_display %}
+  <tr>
+    <td>{{ row.entry }}</td>
+    <td>{{ row.why or "&mdash;" }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% elif analysis.findings %}
+<p>No further static rewrites could be safely applied &mdash; see the findings above for
+obfuscation techniques that were detected but could not be fully resolved automatically.</p>
+{% else %}
+<p>No deobfuscation transforms were needed &mdash; the input appears to already be plaintext.</p>
+{% endif %}
+
+{% if resolved_display %}
+<h3>Statically resolved variables ({{ resolved_display|length }})</h3>
+<p style="font-size:8.2pt;color:#000000;margin:2px 0 4px 0;">
+  Values reconstructed by folding literals through concatenation, encoding and
+  string operations. Nothing was executed to obtain them. Indicators inside these
+  values are defanged{% if redact_iocs %} and redacted{% endif %}.
+</p>
+<table class="grid">
+  <tr><th style="width:20%;">Variable</th><th>Resolved value</th></tr>
+  {% for row in resolved_display %}
+  <tr>
+    <td class="mono">${{ row.name }}</td>
+    <td class="mono">{% if redact_iocs %}<span class="redacted">{% for part in row.value_parts %}{{ part }}<br/>{% endfor %}</span>{% else %}{% for part in row.value_parts %}{{ part }}<br/>{% endfor %}{% endif %}{% if row.decoded %}<span class="sub">decoded from {{ row.decoded_how }}:</span>{% if redact_iocs %}<span class="redacted">{% for part in row.decoded_parts %}{{ part }}<br/>{% endfor %}</span>{% else %}{% for part in row.decoded_parts %}{{ part }}<br/>{% endfor %}{% endif %}{% endif %}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% endif %}
+
+<h2 class="pb">Appendix A &mdash; Deobfuscated script</h2>
+<div class="subtitle">Transforms applied, the input's own line structure left intact &mdash;
+line up against Appendix B to see exactly what changed.</div>
+<div class="code">{% for line in deobfuscated_raw_lines %}{{ line.text }}<br/>{% endfor %}</div>
+
+<h2>Appendix B &mdash; Original input</h2>
+<div class="code">{% for line in original_lines %}{{ line.text }}<br/>{% endfor %}</div>
+{% endif %}
+
+
+</body>
+</html>

@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block title %}Settings - PlaguardsV2{% endblock %}
+{% block content %}
+<div class="section-title"><h2>Settings</h2></div>
+
+<div class="settings-section">
+  <h3>Threat Intel API Keys</h3>
+  <p class="lede">All optional - lookups are skipped and labeled "not checked" for any provider left blank. Keys are stored in the local database on this machine and never leave it except in the lookup request to that provider.</p>
+  <form method="post" action="{{ url_for('settings') }}" class="settings-form">
+    <input type="hidden" name="form" value="keys" />
+    {% for p in providers %}
+    {% set configured = current_keys.get(p.id) %}
+    <div class="settings-row">
+      <label for="{{ p.id }}">{{ p.label }}</label>
+      <input type="password" id="{{ p.id }}" name="{{ p.id }}"
+             class="key-input {{ 'is-set' if configured else 'is-unset' }}"
+             placeholder="{{ 'configured' if configured else 'not configured' }}" autocomplete="off" />
+      <span class="key-state {{ 'ok' if configured else 'off' }}">
+        <i class="bi {{ 'bi-check-circle-fill' if configured else 'bi-x-circle' }}"></i>
+        {{ 'Configured' if configured else 'Not set' }}
+      </span>
+      <a class="docs-link" href="{{ p.docs_url }}" target="_blank" rel="noopener">Get a key <i class="bi bi-box-arrow-up-right"></i></a>
+    </div>
+    {% endfor %}
+    <div class="settings-actions">
+      <button type="submit" class="btn btn-custom" data-busy="Saving API keys…">Save API Keys</button>
+    </div>
+  </form>
+</div>
+
+<div class="settings-section" id="generalSection">
+  <h3>General</h3>
+  <p class="lede">Personalize how PlaguardsV2 stores history and attributes reports.</p>
+  <form method="post" action="{{ url_for('settings') }}" class="settings-form">
+    <input type="hidden" name="form" value="general" />
+    <div class="settings-row">
+      <label for="history_limit">Keep this many analyses</label>
+      <input type="number" id="history_limit" name="history_limit" min="1" max="1000" value="{{ history_limit }}" />
+      <span class="docs-link">oldest are auto-deleted beyond this</span>
+    </div>
+    <div class="settings-row">
+      <label for="analyst_name">Analyst / organization name</label>
+      <input type="text" id="analyst_name" name="analyst_name" value="{{ analyst_name }}" placeholder="shown on PDF reports" />
+      <span class="docs-link">optional</span>
+    </div>
+    <div class="settings-row">
+      <label for="utc_offset">Time zone (UTC offset)</label>
+      <input type="number" id="utc_offset" name="utc_offset" step="0.5" min="-12" max="14" value="{{ utc_offset }}" />
+      <span class="docs-link">used for report &amp; history timestamps</span>
+    </div>
+    <div class="settings-actions">
+      <button type="submit" class="btn btn-custom" data-busy="Saving settings…">Save General Settings</button>
+    </div>
+  </form>
+</div>
+
+<div class="settings-section" id="dangerSection">
+  <h3>Danger Zone</h3>
+  <div class="danger-zone">
+    <p>Permanently deletes every stored analysis, finding, and triage decision. API keys and general settings are kept.</p>
+    <form method="post" action="{{ url_for('settings') }}"
+          onsubmit="return confirm('Delete ALL analysis history? This cannot be undone.');">
+      <input type="hidden" name="form" value="clear_history" />
+      <div class="settings-actions">
+        <button type="submit" class="btn btn-danger" data-busy="Clearing history…"><i class="bi bi-trash"></i> Clear All History</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}

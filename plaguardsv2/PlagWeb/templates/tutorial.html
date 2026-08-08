@@ -1,0 +1,251 @@
+{% extends "base.html" %}
+{% block title %}Tutorial - PlaguardsV2{% endblock %}
+{% block content %}
+<div class="section-title"><h2>Tutorial</h2></div>
+
+<div class="pocolo-tip">
+  <img src="{{ url_for('static', filename='assets/pocolo.png') }}" alt="Pocolo" />
+  <div class="bubble">
+    I'm <strong>Pocolo</strong>. Below is every part of PlaguardsV2, page by page &mdash;
+    each control you can click, and why it does what it does. Prefer to be shown?
+    <em>Tour everything</em> walks the whole app in order, hopping between pages as it goes;
+    each section also has its own <em>Show me this</em>.
+    <div class="pocolo-actions">
+      <a class="link-chip" href="#" data-start-tour="everything"><i class="bi bi-play-circle"></i> Tour everything</a>
+      <a class="link-chip" href="{{ url_for('run_example') }}" data-busy-link="Running the example…"><i class="bi bi-lightning-charge"></i> Run the example script</a>
+    </div>
+  </div>
+</div>
+
+<div class="tutorial-card">
+  <h3>What this tool is for</h3>
+  <p>Attackers rarely ship readable PowerShell. They split strings, Base64-encode
+  stages, build characters from arithmetic and scatter backticks through cmdlet
+  names &mdash; all so a defender (and a signature) sees noise instead of a URL.
+  PlaguardsV2 undoes that <em>statically</em> and pulls out the indicators hiding
+  underneath.</p>
+  <p>It is not only PowerShell. <strong>VBScript</strong>
+  (<span class="mono">Chr()</span> concatenation, <span class="mono">StrReverse</span>,
+  <span class="mono">Replace</span>, Base64 literals, variable propagation),
+  <strong>JScript</strong> (<span class="mono">String.fromCharCode</span>,
+  <span class="mono">atob</span>, <span class="mono">unescape</span>, hex/unicode escapes,
+  <span class="mono">split</span>/<span class="mono">reverse</span>/<span class="mono">join</span>
+  chains) and <strong>batch/cmd</strong> (<span class="mono">set</span> chains,
+  <span class="mono">%var%</span> and delayed <span class="mono">!var!</span> expansion,
+  <span class="mono">%var:~off,len%</span> carving, caret escapes) all get the same
+  treatment, and a raw log line is scanned for indicators as it stands.</p>
+  <p class="why"><strong>Nothing is ever executed.</strong> Every transform rewrites
+  literal values only. There is no <span class="mono">eval</span>, no sandbox, and no
+  PowerShell process &mdash; so a hostile script cannot do anything by being analyzed.</p>
+</div>
+
+<div class="tutorial-card">
+  <h3>Getting around</h3>
+  <p>The dark sidebar is on every page. <strong>New Analysis</strong> is the home page,
+  <strong>History</strong> lists what you've already run, <strong>Tutorial</strong> is
+  here, and <strong>Settings</strong> holds API keys and preferences. The Pocolo
+  portrait at the top starts the guided tour from wherever you are.</p>
+  <p>Anything that takes a moment &mdash; running an analysis, building a PDF &mdash;
+  dims the screen and shows what it's doing, so you never wonder whether a click
+  registered.</p>
+  <div class="pocolo-actions">
+    <a class="link-chip" href="#" data-start-tour="navigation"><i class="bi bi-play-circle"></i> Show me this</a>
+  </div>
+</div>
+
+<div class="tutorial-card">
+  <h3>1. New Analysis page</h3>
+
+  <h4>Analyze a Script</h4>
+  <ol>
+    <li><strong>Paste</strong> a script into the big box &mdash; PowerShell, but also VBS,
+      JScript, batch or a raw log line.</li>
+    <li>Or use the <strong>drop box</strong>: click <em>Choose files</em>, or drag files
+      from Explorer &mdash; anywhere on the page works, not just the box. Accepted:
+      <span class="mono">.ps1 .txt .vbs .js .bat .cmd .log</span>, or a
+      <span class="mono">.zip</span> containing them.</li>
+    <li>Submitting more than one file? <strong>Separate reports</strong> gives one PDF each
+      and lands on History with the batch already selected; <strong>Combined report</strong>
+      returns a single document covering all of them.</li>
+    <li>Tick <strong>Skip threat-intel lookups</strong> if you're offline or have no keys.
+      Deobfuscation and IOC extraction still run &mdash; they are entirely local.</li>
+    <li>Click <strong>Analyze</strong>. One file opens its result page; several files
+      (or a zip) are each analyzed separately and you land on History.</li>
+  </ol>
+  <p class="why">Multiple files at once is the fast path for a folder of samples.
+  A submission is capped at {{ batch_limits.entries }} files,
+  {{ batch_limits.entry_mb }}&nbsp;MB each and {{ batch_limits.total_mb }}&nbsp;MB in total,
+  whether they arrive loose or in an archive &mdash; and directory paths inside a zip are
+  discarded, so a crafted archive cannot write outside the extraction area.</p>
+
+  <h4>Quick IOC Lookup</h4>
+  <ol>
+    <li>Have a single indicator rather than a script? Put it in the second card and check
+      it directly. Nothing is stored in History.</li>
+    <li>Leave the type on <strong>Detect automatically</strong> and the shape of the value
+      decides: IP, domain, URL or hash.</li>
+    <li>Or pick one explicitly &mdash; <strong>IP address</strong>, <strong>Domain</strong>,
+      <strong>URL</strong>, <strong>File hash</strong> or
+      <strong>Malware signature / family</strong>.</li>
+  </ol>
+  <p class="why">A signature is a family name like <span class="mono">AgentTesla</span> or
+  <span class="mono">Formbook</span>. It has no recognisable shape, so auto-detect can never
+  find it &mdash; choosing the type by hand is the only way to reach that lookup. It is
+  checked against MalwareBazaar, the way the original Plaguards' <span class="mono">signature</span>
+  query worked.</p>
+
+  <div class="pocolo-actions">
+    <a class="link-chip" href="#" data-start-tour="analysis"><i class="bi bi-play-circle"></i> Show me the script form</a>
+    <a class="link-chip" href="#" data-start-tour="lookup"><i class="bi bi-play-circle"></i> Show me the lookup</a>
+  </div>
+</div>
+
+<div class="tutorial-card">
+  <h3>2. Result page &mdash; left pane</h3>
+
+  <h4>Deobfuscated Script</h4>
+  <ol>
+    <li>The result is shown <strong>reformatted, one statement per line</strong>. If nothing
+      could be rewritten the page says so plainly rather than implying the input is clean.</li>
+    <li><strong>&ldquo;N deobfuscation transform(s) applied&rdquo;</strong> opens the transform
+      log &mdash; every pass that changed something, in the order it ran.</li>
+    <li><strong>&ldquo;N variable value(s) statically resolved&rdquo;</strong> is the table of
+      variables rebuilt by following assignments in order. This is usually where the real
+      C2 address, port or mutex finally appears.</li>
+    <li>A resolved value can still be a <em>stage</em> rather than the payload &mdash; a
+      Base64 blob, or a list of character codes. Those are decoded again and the plaintext
+      shown underneath, so a multi-stage peel reads end to end instead of stopping at a
+      wall of digits.</li>
+    <li><strong>&ldquo;Show original input&rdquo;</strong> reveals exactly what you submitted,
+      untouched, for comparison.</li>
+  </ol>
+  <p class="why">Resolved values are reconstructed by folding literals through
+  concatenation, Base64, <span class="mono">-join</span>, <span class="mono">-replace</span>,
+  <span class="mono">[char]</span> casts and friends. Nothing runs to obtain them, and the
+  values are defanged before display.</p>
+
+  <div class="pocolo-actions">
+    <a class="link-chip" href="#" data-start-tour="findings"><i class="bi bi-play-circle"></i> Show me this</a>
+  </div>
+</div>
+
+<div class="tutorial-card">
+  <h3>3. Result page &mdash; findings and triage</h3>
+  <ol>
+    <li>Every finding is a card colour-coded by severity: IPs, domains, URLs, hashes,
+      registry keys, mutexes, User-Agents and suspicious code signatures. High-severity
+      cards start open.</li>
+    <li>Click a card to see its <strong>context</strong> (the surrounding source), its
+      <strong>MITRE ATT&amp;CK</strong> technique where one maps cleanly, and threat intel.</li>
+    <li><strong>Expand all</strong> / <strong>Collapse all</strong> work through the list quickly.</li>
+    <li>Each card carries <strong>Confirm Threat</strong>, <strong>False Positive</strong> and
+      <strong>Unknown</strong>. <strong>Mark all as</strong> applies one verdict to every
+      finding in a single request.</li>
+  </ol>
+  <p class="why">Severity describes the <em>technique observed</em>, not confirmed impact.
+  A download cradle is High because that is what cradles are, not because this sample is
+  proven malicious. Your verdict is what the report treats as authoritative.</p>
+  <div class="pocolo-actions">
+    <a class="link-chip" href="#" data-start-tour="findings"><i class="bi bi-play-circle"></i> Show me this</a>
+  </div>
+</div>
+
+<div class="tutorial-card">
+  <h3>4. Threat intelligence</h3>
+  <ol>
+    <li>Indicators are checked against whichever of the seven providers you've configured
+      under Settings.</li>
+    <li>Each finding shows <strong>one headline verdict</strong>; open <strong>details</strong>
+      for the per-provider breakdown. <strong>Click any row</strong> to open that provider's own
+      page for the indicator in a new tab.</li>
+    <li>Reserved or non-routable values are marked <em>Not applicable</em> with the reason,
+      instead of being queried pointlessly.</li>
+    <li>Results are cached locally, so re-running the same sample doesn't spend your quota
+      twice. <span class="mono">--no-cache</span> on the CLI bypasses that.</li>
+  </ol>
+  <p class="why">A documentation IP or a <span class="mono">.invalid</span> domain can never
+  have a reputation. Querying them wastes rate-limited quota and returns confusing HTTP
+  errors, so they are ruled out up front &mdash; but anything a provider will genuinely
+  answer for is still asked.</p>
+  <div class="pocolo-actions">
+    <a class="link-chip" href="#" data-start-tour="lookup"><i class="bi bi-play-circle"></i> Show me this</a>
+  </div>
+</div>
+
+<div class="tutorial-card">
+  <h3>5. Reports</h3>
+  <ol>
+    <li><strong>View Report</strong> opens the PDF in a new tab; <strong>Download Report</strong>
+      saves it.</li>
+    <li>Tick <strong>Redact IOC values</strong> first to print every indicator black-on-black
+      &mdash; present in the file, unreadable at a glance.</li>
+    <li>From History, select several analyses and choose <strong>Combined report</strong> for one
+      document covering all of them, or <strong>Export as zip</strong> for separate PDFs.</li>
+  </ol>
+  <p>Each report opens with a cover, a <strong>table of contents</strong> and a formal
+  <strong>disclaimer</strong> notice &mdash; none of them numbered. Page&nbsp;1 is the analysis
+  summary. After that come the findings table, per-finding detail grouped by severity, the
+  transform log and resolved variables, then <strong>Appendix&nbsp;A</strong> (the deobfuscated
+  script) and <strong>Appendix&nbsp;B</strong> (the original input). Every contents entry is
+  clickable and quotes the page it starts on.</p>
+  <p class="why">All indicators are defanged in the document, so nothing in a report you
+  email around is clickable or resolvable by accident.</p>
+  <div class="pocolo-actions">
+    <a class="link-chip" href="#" data-start-tour="reports"><i class="bi bi-play-circle"></i> Show me this</a>
+  </div>
+</div>
+
+<div class="tutorial-card">
+  <h3>6. History page</h3>
+  <ol>
+    <li>Past analyses, newest first, with the file name, when it ran, the finding count and
+      how many were high severity.</li>
+    <li><strong>View</strong> reopens an analysis, triage verdicts and all.</li>
+    <li>Tick rows (or <strong>Select all</strong>) to <strong>Export as zip</strong>,
+      build a <strong>Combined report</strong>, or <strong>Delete Selected</strong>.</li>
+    <li>Only the most recent are kept &mdash; set how many under Settings &rarr; General.
+      Older ones are pruned automatically after each run.</li>
+  </ol>
+  <div class="pocolo-actions">
+    <a class="link-chip" href="#" data-start-tour="history"><i class="bi bi-play-circle"></i> Show me this</a>
+  </div>
+</div>
+
+<div class="tutorial-card">
+  <h3>7. Settings page</h3>
+  <ol>
+    <li><strong>Threat Intel API Keys</strong> &mdash; one field per provider. A green box
+      means configured, red means that provider is skipped. Each row links to where you
+      get a key. Saving a blank field leaves the stored key alone.</li>
+    <li><strong>General</strong> &mdash; how many analyses to keep, the analyst or
+      organisation name printed on reports, and the UTC offset used for every timestamp
+      in reports and History.</li>
+    <li><strong>Danger Zone</strong> &mdash; clears every stored analysis, finding and
+      triage decision. API keys and general settings survive it.</li>
+  </ol>
+  <p class="why">Keys live in the local SQLite database on this machine. Only the extracted
+  indicator value is ever sent to a provider &mdash; never your script, and never the
+  surrounding context.</p>
+  <div class="pocolo-actions">
+    <a class="link-chip" href="#" data-start-tour="settings"><i class="bi bi-play-circle"></i> Show me this</a>
+  </div>
+</div>
+
+<div class="tutorial-card">
+  <h3>8. Command line</h3>
+  <p>Everything above is available headless, for scripting a queue of samples:</p>
+  <ol>
+    <li><span class="mono">python -m plaguardsv2.PlagCLI analyze sample.ps1</span> &mdash; or pipe
+      the script in on stdin.</li>
+    <li><span class="mono">--pdf FILE</span> and <span class="mono">--json FILE</span> write the
+      same report and results you'd get in the browser;
+      <span class="mono">--redact-iocs</span> produces the redacted copy.</li>
+    <li><span class="mono">--no-intel</span>, <span class="mono">--no-cache</span> and
+      <span class="mono">--no-store</span> control lookups and persistence;
+      <span class="mono">--triage</span> walks you through the findings interactively.</li>
+  </ol>
+  <p class="why">The CLI and the web UI share one database, so anything you analyze from a
+  terminal shows up in History &mdash; and anything you triage in the browser is reflected in
+  a report generated later from the command line.</p>
+</div>
+{% endblock %}
