@@ -11,14 +11,15 @@ from __future__ import annotations
 
 import re
 
-from . import PlagEncode
+from . import PlagArith, PlagEncode
 
 _DQ = r'"(?:[^"\\]|\\.)*"'
 _SQ = r"'(?:[^'\\]|\\.)*'"
 _LITERAL = f"(?:{_DQ}|{_SQ})"
 
+# Arithmetic per argument too: fromCharCode(0x6d, 108+1, 97*1).
 _FROM_CHAR_CODE_RE = re.compile(
-    r"\bString\s*\.\s*fromCharCode\s*\(\s*([0-9\s,xXA-Fa-f]{1,4000})\)",
+    r"\bString\s*\.\s*fromCharCode\s*\(\s*([0-9A-Fa-fxX\s,+\-*/^()]{1,4000}?)\s*\)",
     re.IGNORECASE,
 )
 
@@ -43,6 +44,20 @@ _REPLACE_RE = re.compile(
     rf"({_LITERAL})\s*\.\s*replace\s*\(\s*({_LITERAL})\s*,\s*({_LITERAL})\s*\)",
     re.IGNORECASE,
 )
+
+# "abcdef".substring(2, 5) / .substr(2, 3) / .slice(2, 5) / .charAt(2)
+_SLICE_RE = re.compile(
+    r"({literal})\s*\.\s*(substring|substr|slice|charAt)\s*\(\s*"
+    r"(-?\d{{1,6}})\s*(?:,\s*(-?\d{{1,6}})\s*)?\)".format(literal=_LITERAL),
+    re.IGNORECASE,
+)
+
+_CASE_TRIM_RE = re.compile(
+    rf"({_LITERAL})\s*\.\s*(toUpperCase|toLowerCase|trim)\s*\(\s*\)",
+    re.IGNORECASE,
+)
+
+_CASE_TRIM_OPS = {"touppercase": str.upper, "tolowercase": str.lower, "trim": str.strip}
 
 _ATOB_RE = re.compile(rf"\batob\s*\(\s*({_LITERAL})\s*\)", re.IGNORECASE)
 
@@ -94,19 +109,21 @@ def resolve_char_codes(text: str):
 
     def swap(match: re.Match) -> str:
         nonlocal hits
-        codes = []
+        chars = []
         for token in match.group(1).split(","):
             token = token.strip()
             if not token:
                 continue
-            try:
-                codes.append(int(token, 16) if token[:2].lower() == "0x" else int(token))
-            except ValueError:
+            char = PlagArith.to_char(token)
+            if char is None:
+                # One argument we cannot fold means the whole call stays, so a
+                # partly-decoded string is never presented as the answer.
                 return match.group(0)
-        if not codes or any(not 0 <= c <= 0x10FFFF for c in codes):
+            chars.append(char)
+        if not chars:
             return match.group(0)
         hits += 1
-        return _quote("".join(chr(c) for c in codes))
+        return _quote("".join(chars))
 
     result = _FROM_CHAR_CODE_RE.sub(swap, text)
     return result, hits > 0, f"{hits} sequence(s)" if hits else ""
@@ -148,11 +165,39 @@ def fold_string_methods(text: str):
         # A string argument replaces only the first occurrence in JS.
         return _quote(target.replace(find, sub, 1))
 
+    def slice_(match: re.Match) -> str:
+        nonlocal hits
+        target, method = _unquote(match.group(1)), match.group(2).lower()
+        start = int(match.group(3))
+        second = match.group(4)
+        if method == "charat":
+            if not 0 <= start < len(target):
+                return match.group(0)
+            hits += 1
+            return _quote(target[start])
+        if second is None:
+            cut = target[start:]
+        elif method == "substr":
+            # substr's second argument is a length, the others' is an end index.
+            cut = target[start:start + int(second)]
+        else:
+            cut = target[start:int(second)]
+        hits += 1
+        return _quote(cut)
+
+    def case_trim(match: re.Match) -> str:
+        nonlocal hits
+        hits += 1
+        return _quote(_CASE_TRIM_OPS[match.group(2).lower()](_unquote(match.group(1))))
+
+    # Repeated, because folding an inner call can expose an outer one.
     for _ in range(20):
         before = text
         text = _REVERSE_CHAIN_RE.sub(reverse, text)
         text = _SPLIT_JOIN_RE.sub(split_join, text)
         text = _REPLACE_RE.sub(replace, text)
+        text = _SLICE_RE.sub(slice_, text)
+        text = _CASE_TRIM_RE.sub(case_trim, text)
         if text == before:
             break
 

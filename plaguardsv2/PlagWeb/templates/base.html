@@ -35,7 +35,7 @@
 
     <nav id="navmenu">
       <ul>
-        <li><a href="{{ url_for('index') }}" class="{{ 'active' if request.endpoint == 'index' }}"><i class="bi bi-file-earmark-code navicon"></i>New Analysis</a></li>
+        <li><a href="{{ url_for('index') }}" class="{{ 'active' if request.endpoint == 'index' }}"><i class="bi bi-file-earmark-code navicon"></i>Analyze</a></li>
         <li><a href="{{ url_for('history') }}" class="{{ 'active' if request.endpoint == 'history' }}"><i class="bi bi-clock-history navicon"></i>History</a></li>
         <li><a href="{{ url_for('tutorial') }}" class="{{ 'active' if request.endpoint == 'tutorial' }}"><i class="bi bi-info-circle navicon"></i>Tutorial</a></li>
         <li><a href="{{ url_for('settings') }}" class="{{ 'active' if request.endpoint == 'settings' }}"><i class="bi bi-gear navicon"></i>Settings</a></li>

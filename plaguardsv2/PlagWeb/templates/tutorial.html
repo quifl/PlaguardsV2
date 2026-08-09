@@ -19,21 +19,20 @@
 
 <div class="tutorial-card">
   <h3>What this tool is for</h3>
-  <p>Attackers rarely ship readable PowerShell. They split strings, Base64-encode
-  stages, build characters from arithmetic and scatter backticks through cmdlet
-  names &mdash; all so a defender (and a signature) sees noise instead of a URL.
-  PlaguardsV2 undoes that <em>statically</em> and pulls out the indicators hiding
-  underneath.</p>
-  <p>It is not only PowerShell. <strong>VBScript</strong>
-  (<span class="mono">Chr()</span> concatenation, <span class="mono">StrReverse</span>,
-  <span class="mono">Replace</span>, Base64 literals, variable propagation),
-  <strong>JScript</strong> (<span class="mono">String.fromCharCode</span>,
-  <span class="mono">atob</span>, <span class="mono">unescape</span>, hex/unicode escapes,
-  <span class="mono">split</span>/<span class="mono">reverse</span>/<span class="mono">join</span>
-  chains) and <strong>batch/cmd</strong> (<span class="mono">set</span> chains,
-  <span class="mono">%var%</span> and delayed <span class="mono">!var!</span> expansion,
-  <span class="mono">%var:~off,len%</span> carving, caret escapes) all get the same
-  treatment, and a raw log line is scanned for indicators as it stands.</p>
+  <p>You give it a suspicious script. It gives you back readable code, a list of
+  indicators, and a report you can hand to someone else.</p>
+  <ul>
+    <li><strong>Reads the script for you</strong> &mdash; PowerShell, VBScript,
+      JScript, batch and cmd all get unpicked into plain text.</li>
+    <li><strong>Finds the indicators</strong> &mdash; including ones the script
+      only assembles as it runs.</li>
+    <li><strong>Checks them automatically</strong> &mdash; every indicator is looked
+      up as part of the analysis, not as a separate errand.</li>
+    <li><strong>Tells you where they are</strong> &mdash; country, city, ASN and
+      reverse DNS for every address.</li>
+    <li><strong>Lets you decide</strong> &mdash; your verdict on each finding.</li>
+    <li><strong>Writes it up</strong> &mdash; a PDF, plus Excel and CSV.</li>
+  </ul>
   <p class="why"><strong>Nothing is ever executed.</strong> Every transform rewrites
   literal values only. There is no <span class="mono">eval</span>, no sandbox, and no
   PowerShell process &mdash; so a hostile script cannot do anything by being analyzed.</p>
@@ -41,7 +40,7 @@
 
 <div class="tutorial-card">
   <h3>Getting around</h3>
-  <p>The dark sidebar is on every page. <strong>New Analysis</strong> is the home page,
+  <p>The dark sidebar is on every page. <strong>Analyze</strong> is the home page,
   <strong>History</strong> lists what you've already run, <strong>Tutorial</strong> is
   here, and <strong>Settings</strong> holds API keys and preferences. The Pocolo
   portrait at the top starts the guided tour from wherever you are.</p>
@@ -54,7 +53,7 @@
 </div>
 
 <div class="tutorial-card">
-  <h3>1. New Analysis page</h3>
+  <h3>1. Analyze page</h3>
 
   <h4>Analyze a Script</h4>
   <ol>
@@ -67,8 +66,9 @@
     <li>Submitting more than one file? <strong>Separate reports</strong> gives one PDF each
       and lands on History with the batch already selected; <strong>Combined report</strong>
       returns a single document covering all of them.</li>
-    <li>Tick <strong>Skip threat-intel lookups</strong> if you're offline or have no keys.
-      Deobfuscation and IOC extraction still run &mdash; they are entirely local.</li>
+    <li>Leave <strong>Skip threat-intel lookups</strong> unticked and every indicator
+      found is checked automatically, and every address located. Tick it only when
+      you're offline or have no keys &mdash; deobfuscation and extraction still run.</li>
     <li>Click <strong>Analyze</strong>. One file opens its result page; several files
       (or a zip) are each analyzed separately and you land on History.</li>
   </ol>
@@ -173,7 +173,25 @@
 </div>
 
 <div class="tutorial-card">
-  <h3>5. Reports</h3>
+  <h3>5. Where the addresses are</h3>
+  <ul>
+    <li>Every IP found is located: <strong>country, city, coordinates, continent,
+      ASN, organisation, network</strong> and <strong>reverse DNS</strong>.</li>
+    <li>Each one is also categorised &mdash; public, private, documentation,
+      loopback &mdash; so a reserved address is not presented as a real location.</li>
+    <li>Point Settings &rarr; General at a <strong>MaxMind GeoLite2 database</strong>
+      and this runs entirely offline.</li>
+    <li>No database? Add an <strong>ipinfo.io</strong> token instead. With neither,
+      geolocation is simply skipped.</li>
+  </ul>
+  <p class="why">A reputation verdict says whether an address is known bad.
+  Geolocation says whether traffic to it makes sense at all &mdash; a share
+  reaching a host two continents away is worth a question even when no provider
+  has ever heard of it.</p>
+</div>
+
+<div class="tutorial-card">
+  <h3>6. Reports</h3>
   <ol>
     <li><strong>View Report</strong> opens the PDF in a new tab; <strong>Download Report</strong>
       saves it.</li>
@@ -232,7 +250,7 @@
 </div>
 
 <div class="tutorial-card">
-  <h3>8. Command line</h3>
+  <h3>9. Command line</h3>
   <p>Everything above is available headless, for scripting a queue of samples:</p>
   <ol>
     <li><span class="mono">python -m plaguardsv2.PlagCLI analyze sample.ps1</span> &mdash; or pipe

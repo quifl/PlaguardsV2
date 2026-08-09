@@ -28,6 +28,9 @@ PROVIDERS = [
          docs_url="https://viz.greynoise.io/account/"),
     dict(id="pulsedive", label="Pulsedive", env_var="PULSEDIVE_API_KEY",
          docs_url="https://pulsedive.com/api/"),
+    # Geolocation rather than reputation: where an address is and who runs it.
+    dict(id="ipinfo", label="ipinfo.io (IP geolocation)", env_var="IPINFO_TOKEN",
+         docs_url="https://ipinfo.io/account/token"),
 ]
 
 _BY_ID = {p["id"]: p for p in PROVIDERS}
@@ -66,6 +69,7 @@ def all_keys(conn: sqlite3.Connection | None) -> dict:
 
 # --- General app settings (not API keys, but stored the same way) ---------
 
+GEOIP_DB_KEY = "GEOIP_DB_PATH"
 HISTORY_LIMIT_KEY = "HISTORY_LIMIT"
 ANALYST_NAME_KEY = "ANALYST_NAME"
 UTC_OFFSET_KEY = "UTC_OFFSET"
@@ -92,6 +96,26 @@ def set_history_limit(conn: sqlite3.Connection, limit: int) -> None:
     from . import PlagStore
 
     PlagStore.set_setting(conn, HISTORY_LIMIT_KEY, str(max(1, int(limit))))
+
+
+def get_geoip_db_path(conn: sqlite3.Connection | None) -> str:
+    """Path to a local MaxMind GeoLite2 database, if one is configured.
+
+    Preferred over the hosted lookup: the address never leaves the machine.
+    """
+    from . import PlagStore
+
+    value = ""
+    if conn is not None:
+        value = PlagStore.get_setting(conn, GEOIP_DB_KEY) or ""
+    value = value or os.environ.get(GEOIP_DB_KEY, "")
+    return value.strip()
+
+
+def set_geoip_db_path(conn: sqlite3.Connection, path: str) -> None:
+    from . import PlagStore
+
+    PlagStore.set_setting(conn, GEOIP_DB_KEY, (path or "").strip())
 
 
 def get_analyst_name(conn: sqlite3.Connection | None) -> str:

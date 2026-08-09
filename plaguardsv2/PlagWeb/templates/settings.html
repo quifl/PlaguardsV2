@@ -44,6 +44,14 @@
       <span class="docs-link">optional</span>
     </div>
     <div class="settings-row">
+      <label for="geoip_db">GeoLite2 database (optional)</label>
+      <input type="text" id="geoip_db" name="geoip_db" value="{{ geoip_db }}"
+             placeholder="C:\path\to\GeoLite2-City.mmdb" />
+      <span class="docs-link">offline IP geolocation</span>
+      <a class="docs-link" href="https://dev.maxmind.com/geoip/geolite2-free-geolocation-data"
+         target="_blank" rel="noopener" data-no-busy>Get the DB <i class="bi bi-box-arrow-up-right"></i></a>
+    </div>
+    <div class="settings-row">
       <label for="utc_offset">Time zone (UTC offset)</label>
       <input type="number" id="utc_offset" name="utc_offset" step="0.5" min="-12" max="14" value="{{ utc_offset }}" />
       <span class="docs-link">used for report &amp; history timestamps</span>

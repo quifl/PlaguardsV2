@@ -1,4 +1,4 @@
-# PlaguardsV2: Static Deobfuscation and IOC Triage for Blue Teams.
+# PlaguardsV2: Open Source Static Deobfuscation and IOC Detection Engine with Analyst Triage for Blue Teams.
 
 <p align="center">
 <img src="plaguardsv2/PlagWeb/static/assets/PlaguardsBanner.png" width="620" alt="PlaguardsV2">
@@ -10,31 +10,126 @@
  <a href="#"><img src="https://img.shields.io/badge/Static_Deobfuscator-blue"></a>
  <a href="#"><img src="https://img.shields.io/badge/IOC_Checker-red"></a>
  <a href="#"><img src="https://img.shields.io/badge/Automated_Reporting-white"></a>
+ <a href="#"><img src="https://img.shields.io/badge/IP_Geolocation-2e7d32"></a>
  <a href="#"><img src="https://img.shields.io/badge/7_Threat_Intel_Providers-c81e4a"></a>
  <a href="https://github.com/baycysec/plaguards"><img src="https://img.shields.io/badge/Built_on-Plaguards_v1-640D5F"></a>
 </p>
 
-<p align="justify">PlaguardsV2 takes an obfuscated script, turns it back into something a human can read, and pulls out the indicators hiding underneath it. It is a spiritual v2 of <a href="https://github.com/baycysec/plaguards">Plaguards</a>: same purpose, rebuilt as a local-first application with a command-line interface, a web dashboard, and a shareable PDF report at the end of every analysis.</p>
+## What it does
 
-<p align="justify">Nothing you submit is ever executed. Every transform is a rewrite of literal values — there is no <code>eval</code>, no sandbox, and no PowerShell process — so a hostile script cannot do anything by being analyzed. Deobfuscation, indicator extraction, storage and report generation all run entirely offline; the only thing that ever leaves the machine is an extracted indicator value sent to a threat-intel provider you configured yourself.</p>
+You give it a suspicious script. It gives you back readable code, a list of
+indicators, and a report you can hand to someone else.
 
-## Motivation
+- **Reads the script for you.** Obfuscated PowerShell, VBScript, JScript,
+  batch and cmd get unpicked into plain text.
+- **Finds the indicators.** IPs, domains, URLs, hashes, registry keys,
+  mutexes and User-Agents, including ones assembled at runtime.
+- **Checks them automatically.** Every indicator is looked up against your
+  threat-intel providers as part of the analysis, not as a separate step.
+- **Tells you where they are.** Addresses get country, city, ASN and
+  reverse DNS.
+- **Lets you decide.** Mark each finding Threat, False Positive or Unknown.
+- **Writes it up.** A PDF report, plus Excel and CSV of the same findings.
 
-<p align="justify">Attackers rarely ship readable PowerShell. They split strings across concatenations, Base64-encode whole stages, build characters out of arithmetic and scatter backticks through cmdlet names — all so that a defender, and a signature, sees noise instead of a URL. Most tooling in this space <em>detects</em> that a script is obfuscated and stops there, which leaves the responder with the same wall of text they started with.</p>
+> [!IMPORTANT]
+> **Nothing you submit is ever executed.** Every transform rewrites literal
+> values only - no `eval`, no sandbox, no PowerShell process. Deobfuscation,
+> extraction, storage and reporting all run offline. The only thing that
+> leaves your machine is an indicator value sent to a provider you configured.
 
-<p align="justify">PlaguardsV2 exists to finish the job, and to do it for more than PowerShell: the same corpus of techniques shows up in the .vbs, .js, .bat and .cmd files that arrive alongside it, and in the log lines that record them after the fact. It ends with an artefact you can hand to somebody else — a report that records what was applied, what was found, and what the analyst decided.</p>
+## Why it exists
+
+- Attackers do not ship readable scripts. They split strings, Base64 whole
+  stages, build characters out of arithmetic and scatter backticks through
+  cmdlet names - so a defender sees noise instead of a URL.
+- Most tools only *detect* that a script is obfuscated. You are left with the
+  same wall of text.
+- The same tricks show up in the `.vbs`, `.js`, `.bat` and `.cmd` files that
+  arrive alongside, and in the logs that record them afterwards.
+- PlaguardsV2 finishes the job for all of them, and ends with an artefact:
+  what was applied, what was found, and what you decided.
 
 ## Main Features
 
-|No.|Feature|Summary|
-|:-:|:------|:------|
-|1.|**Static deobfuscation**|Multi-pass, multi-language, and never executing anything. **PowerShell:** `-EncodedCommand` blobs, `[Convert]::FromBase64String` literals (gzip/deflate stages inflated transparently), string concatenation, `-join` / `-split` / `-replace`, the `-f` format operator, `[char]` code points and arithmetic, `-bxor`, `$(...)` subexpressions, `[Text.Encoding]::*.GetString`, `[byte[]]` arrays, junk backticks, redundant `[string]` casts, and sequential variable tracking through reassignment chains. **VBScript:** `Chr()` concatenation, `StrReverse`, `Replace`, Base64 literals, literal variable propagation. **JScript:** `String.fromCharCode`, `atob`, `unescape` / `decodeURIComponent`, hex and unicode escapes, Base64 literals, `split`/`reverse`/`join` chains, `replace`, literal variable propagation. **Batch/cmd:** `set` chains, `%var%` and delayed `!var!` expansion, `%var:~offset,length%` carving, `%var:find=replace%`, caret escapes. Every pass that fires is recorded in a transform log.|
-|2.|**Indicator & signature extraction**|IPs, domains, URLs, emails, MD5/SHA1/SHA256 hashes (including defanged forms like `1[.]2[.]3[.]4` and `hxxp://`), plus registry keys, mutexes, User-Agents, `ip:port` pairs and partial hashes. A signature ruleset covers download cradles, in-memory execution, LOLBins, persistence, AMSI references and hidden-window flags, each tagged with a MITRE ATT&CK technique.|
-|3.|**Seven threat-intel providers**|VirusTotal, abuse.ch (MalwareBazaar / ThreatFox / URLhaus), AbuseIPDB, AlienVault OTX, Shodan, GreyNoise and Pulsedive behind one config point and one Settings page. All optional, all cached locally. Every result row links straight to that provider's own page for the indicator. Reserved and non-routable values are marked *not applicable* with the reason rather than burning quota on a lookup that cannot return anything.|
-|3b.|**IOC Checker**|A single indicator, checked without running a full analysis. Leave the type on **Detect automatically** and the value's shape decides; or pick **IP**, **Domain**, **URL**, **File hash** or **Malware signature / family** explicitly. A signature (`AgentTesla`, `Formbook`) has no detectable shape, so choosing the type by hand is the only way to reach it — the same `hash` / `signature` / `domain` / `ip` query set the original Plaguards offered.|
-|4.|**Analyst triage**|Mark each finding Confirmed Threat, False Positive or Unknown, individually or in bulk. Severity describes the *technique observed*, not confirmed impact — your verdict is what the report treats as the conclusion.|
-|5.|**Automated PDF reporting**|A cover, a clickable table of contents quoting the page each section starts on, and a formal disclaimer notice — then page 1: the summary with charts, a findings table, per-finding detail grouped by severity, the transform log with resolved variables, and both scripts in full. Indicators are defanged throughout, and can optionally be redacted black-on-black before sharing. A batch can produce separate PDFs or one combined document that lists every analysis and its sections in the contents.|
-|6.|**CLI and dashboard, one pipeline**|Both front ends call the same engine and share one database, so a script analyzed from a terminal appears in the dashboard's History, and a verdict recorded in the browser shows up in a report generated later from the command line.|
+**1. Static deobfuscation** - multi-pass, multi-language, never executes anything.
+
+- *PowerShell:* encoded commands; Base64 (including gzip/deflate stages);
+  string concatenation; `-join` / `-split` / `-replace`; the `-f` format
+  operator; `[char]` codes and arithmetic (`+ - * /` and `-bxor`); `$(...)`
+  subexpressions; `[Text.Encoding]::*.GetString`; `[byte[]]` arrays;
+  backticks; `[string]` casts; whitespace; statement splitting on `;`; and
+  variable tracking through reassignment chains.
+- *VBScript:* `Chr()` with arithmetic, `&` concatenation, `StrReverse`,
+  `Replace`, `Split`/`Join`, `Mid`/`Left`/`Right`, `UCase`/`LCase`/`Trim`,
+  Base64 literals, variable propagation.
+- *JScript:* `String.fromCharCode` with arithmetic, `atob`, `unescape`,
+  hex and unicode escapes, Base64 literals, `split`/`reverse`/`join`,
+  `replace`, `substring`/`substr`/`slice`/`charAt`, case and trim,
+  variable propagation.
+- *Batch / cmd:* `set` chains, `%var%` and delayed `!var!` expansion,
+  `%var:~offset,length%` carving, `%var:find=replace%`, caret escapes.
+- *Raw data and logs:* a line that is entirely a Base64 blob or a list of
+  character codes is decoded in place.
+- Every pass that fires is written to a transform log.
+
+**2. Indicator and signature extraction**
+
+- IPs, domains, URLs, emails, MD5/SHA-1/SHA-256 hashes.
+- Defanged forms too - `1[.]2[.]3[.]4`, `hxxp://`.
+- Registry keys, mutexes, User-Agents, `ip:port` pairs, partial hashes.
+- A signature ruleset for download cradles, in-memory execution, LOLBins,
+  persistence, AMSI references and hidden-window flags.
+- Each tagged with its MITRE ATT&CK technique.
+
+**3. IOC Checker** - one indicator, checked on its own.
+
+- Leave the type on **Detect automatically** and the value's shape decides.
+- Or choose **IP**, **Domain**, **URL**, **File hash** or
+  **Malware signature / family**.
+- A signature (`AgentTesla`, `Formbook`) has no detectable shape, so picking
+  the type by hand is the only way to reach it - the same `hash` /
+  `signature` / `domain` / `ip` set Plaguards v1 offered.
+
+**4. Threat intelligence** - seven providers, all optional.
+
+- VirusTotal, abuse.ch (MalwareBazaar / ThreatFox / URLhaus), AbuseIPDB,
+  AlienVault OTX, Shodan, GreyNoise, Pulsedive.
+- One config point and one Settings page for every key.
+- Results are cached locally, so re-running a sample does not spend quota.
+- Every result row links to that provider's own page for the indicator.
+- Reserved and non-routable values are marked *not applicable* with the
+  reason, instead of burning a lookup that cannot return anything.
+
+**5. IP geolocation** - inspired by [HolmesGeo](https://github.com/jon-brandy/HolmesGeo).
+
+- Country, city, coordinates, continent, ASN, organisation, network.
+- Reverse DNS, and a category for every address (public, private,
+  documentation, loopback).
+- Prefers a **local MaxMind GeoLite2 database** - fully offline, the address
+  never leaves the machine. Falls back to ipinfo.io if you give it a token.
+
+**6. Analyst triage** - your call is the conclusion.
+
+- Mark each finding Confirmed Threat, False Positive or Unknown.
+- Do it one at a time, or all at once.
+- Severity describes the *technique observed*, not confirmed impact.
+
+**7. Reporting**
+
+- A PDF: cover, clickable contents with page numbers, formal disclaimer,
+  summary with charts, findings table, per-finding detail, transform log,
+  resolved variables, and both scripts in full.
+- **Excel and CSV** of the same findings, with the geolocation columns -
+  sortable, filterable, ready to paste into a ticket.
+- Indicators are defanged throughout, and can be redacted before sharing.
+- A batch gives you separate PDFs or one combined document.
+
+**8. CLI and dashboard, one pipeline**
+
+- Both front ends call the same engine and share one database.
+- A script analyzed in a terminal shows up in the dashboard's History.
+- A verdict recorded in the browser appears in a report generated later
+  from the command line.
 
 ## Requirements
 
@@ -83,6 +178,9 @@ Configure any subset from the **Settings** page, or edit `.env` directly. Withou
 | Shodan | `SHODAN_API_KEY` | https://account.shodan.io/ |
 | GreyNoise (Community) | `GREYNOISE_API_KEY` | https://viz.greynoise.io/account/ |
 | Pulsedive | `PULSEDIVE_API_KEY` | https://pulsedive.com/api/ |
+| ipinfo.io *(geolocation)* | `IPINFO_TOKEN` | https://ipinfo.io/account/token |
+
+For geolocation, a **local MaxMind GeoLite2 database** is preferred over ipinfo - point Settings → General at the `.mmdb` file and lookups never leave your machine. Grab it free from [MaxMind](https://dev.maxmind.com/geoip/geolite2-free-geolocation-data).
 
 > [!WARNING]
 > Keys are stored in the local SQLite database on the machine you run this on. Do not commit `.env`, and do not hardcode keys in source.
@@ -91,11 +189,11 @@ Configure any subset from the **Settings** page, or edit `.env` directly. Withou
 
 | Page | What it does |
 |---|---|
-| **New Analysis** | Paste a script, or drop files anywhere on the page — `.ps1 .txt .vbs .js .bat .cmd .log`, or a `.zip`. Up to 200 files, 5 MB each, 100 MB per submission. A batch can produce separate reports or one combined document. The second card is the **IOC Checker**: one indicator, with the type detected automatically or chosen from the list. |
-| **Result** | Deobfuscated script, transform log, resolved variables and the original input on the left; findings with context, MITRE mapping, threat intel and triage controls on the right. |
+| **Analyze** | Paste a script, or drop files anywhere on the page — `.ps1 .txt .vbs .js .bat .cmd .log`, or a `.zip`. Up to 200 files, 5 MB each, 100 MB per submission. A batch can produce separate reports or one combined document. The second card is the **IOC Checker**: one indicator, with the type detected automatically or chosen from the list. |
+| **Result** | Deobfuscated script, transform log, resolved variables and the original input on the left; findings with context, MITRE mapping, threat intel and triage controls on the right. Export the findings as PDF, Excel or CSV. |
 | **History** | Past analyses newest first. Select rows to export a zip of PDFs, build a combined report, or delete in bulk. Retention is configurable. |
 | **Tutorial** | Every feature explained page by page, plus a guided tour that walks the whole app. |
-| **Settings** | API keys, history retention, the analyst name printed on reports, the UTC offset used for timestamps, and a danger zone that clears stored history. |
+| **Settings** | API keys, the GeoLite2 database path, history retention, the analyst name printed on reports, the UTC offset used for timestamps, and a danger zone that clears stored history. |
 
 ### CLI usage
 
@@ -154,6 +252,9 @@ plaguardsv2/
     PlagJs.py          JScript literal folding
     PlagCmd.py         batch / cmd variable resolution
     PlagEncode.py      shared escape / base64 / percent decoding
+    PlagArith.py       safe arithmetic for Chr() / fromCharCode()
+    PlagGeo.py         IP geolocation (local GeoLite2, or ipinfo.io)
+    PlagTable.py       findings as CSV / XLSX, geolocation included
     PlagLinks.py       deep links into each provider's own pages
     PlagGrep.py        indicator extraction + signature scanning
     PlagRules/         signature rule sets, MITRE-tagged (see note below)

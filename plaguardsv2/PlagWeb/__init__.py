@@ -9,7 +9,7 @@ from pathlib import Path
 from flask import Flask, Response, flash, g, jsonify, redirect, render_template, request, url_for
 
 from ..GuardModules import PlagBatch, PlagConfig, PlagEngine, PlagFilter, PlagGrep, PlagIntel, PlagReport
-from ..GuardModules import PlagLinks, PlagStore
+from ..GuardModules import PlagGeo, PlagLinks, PlagStore, PlagTable
 
 VALID_STATUSES = {"confirmed_threat", "false_positive", "unreviewed", "unknown"}
 
@@ -125,7 +125,9 @@ def create_app(db_path: str | None = None) -> Flask:
         result = PlagEngine.run_analysis(
             sample.read_text(encoding="utf-8", errors="replace"),
             filename="example-analysis.ps1",
-            skip_intel=request.args.get("intel", "0") != "1",
+            # The IOC check is part of an analysis, so the demo runs it too;
+            # ?intel=0 opts out for an offline walkthrough.
+            skip_intel=request.args.get("intel", "1") == "0",
             conn=conn,
             source_kind="file",
         )
@@ -269,6 +271,45 @@ def create_app(db_path: str | None = None) -> Flask:
     def download_report(analysis_id):
         return _render_report_response(analysis_id, "attachment")
 
+    @app.route("/analysis/<int:analysis_id>/table.<fmt>")
+    def download_table(analysis_id, fmt):
+        """Findings as a spreadsheet - the same data as the PDF, but sortable.
+
+        Geolocation columns are filled in live, so an analysis run before a
+        GeoIP source was configured still exports enriched rows.
+        """
+        if fmt not in ("csv", "xlsx"):
+            return render_template("404.html"), 404
+
+        conn = get_db()
+        data = PlagStore.get_analysis(conn, analysis_id)
+        if data is None:
+            return render_template("404.html"), 404
+
+        geo = {}
+        for finding in data["findings"]:
+            if finding.get("type") not in ("ip", "ip_port"):
+                continue
+            host = str(finding.get("value", "")).rsplit(":", 1)[0] \
+                if finding.get("type") == "ip_port" else str(finding.get("value", ""))
+            if host and host not in geo:
+                geo[host] = PlagGeo.locate(host, conn)
+
+        rows = PlagTable.build_rows(data, geo)
+        stem = f"plaguardsv2-findings-{analysis_id}"
+        if fmt == "csv":
+            payload, mimetype = PlagTable.to_csv(rows), "text/csv; charset=utf-8"
+        else:
+            if not PlagTable.xlsx_available():
+                flash("Excel export needs openpyxl - install it, or use CSV.", "error")
+                return redirect(url_for("view_analysis", analysis_id=analysis_id))
+            payload = PlagTable.to_xlsx(rows, title=f"Analysis {analysis_id}")
+            mimetype = ("application/vnd.openxmlformats-officedocument"
+                        ".spreadsheetml.sheet")
+        return Response(payload, mimetype=mimetype, headers={
+            "Content-Disposition": f'attachment; filename="{stem}.{fmt}"'
+        })
+
     @app.route("/history")
     def history():
         conn = get_db()
@@ -385,6 +426,7 @@ def create_app(db_path: str | None = None) -> Flask:
                 if limit.isdigit():
                     PlagConfig.set_history_limit(conn, int(limit))
                 PlagConfig.set_analyst_name(conn, request.form.get("analyst_name", ""))
+                PlagConfig.set_geoip_db_path(conn, request.form.get("geoip_db", ""))
                 offset = request.form.get("utc_offset", "").strip()
                 if offset:
                     try:
@@ -411,6 +453,7 @@ def create_app(db_path: str | None = None) -> Flask:
             history_limit=PlagConfig.get_history_limit(conn),
             analyst_name=PlagConfig.get_analyst_name(conn),
             utc_offset=PlagConfig.get_utc_offset(conn),
+            geoip_db=PlagConfig.get_geoip_db_path(conn),
         )
 
     return app

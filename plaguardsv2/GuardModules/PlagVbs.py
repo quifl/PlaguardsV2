@@ -11,12 +11,39 @@ from __future__ import annotations
 
 import re
 
-from . import PlagEncode
+from . import PlagArith, PlagEncode
 
 _LITERAL = r'"(?:[^"]|"")*"'
 
-# Chr(72), ChrW(&H48), Chr$(72)
-_CHR_RE = re.compile(r"\bChrW?\$?\s*\(\s*(&[Hh][0-9A-Fa-f]+|\d{1,7})\s*\)", re.IGNORECASE)
+# Chr(72), ChrW(&H48), Chr$(72), and the arithmetic forms - Chr(71+1).
+_CHR_RE = re.compile(
+    r"\bChrW?\$?\s*\(\s*([0-9A-Fa-f&Hh\s+\-*/^()]{1,120}?)\s*\)",
+    re.IGNORECASE,
+)
+
+# Split / Join / Mid / Left / Right and the case-and-trim family. All fold
+# only when every argument is a literal.
+_SPLIT_JOIN_RE = re.compile(
+    rf"\bJoin\s*\(\s*Split\s*\(\s*({_LITERAL})\s*,\s*({_LITERAL})\s*\)\s*,\s*({_LITERAL})\s*\)",
+    re.IGNORECASE,
+)
+_MID_RE = re.compile(
+    rf"\bMid\s*\(\s*({_LITERAL})\s*,\s*(\d{{1,6}})\s*(?:,\s*(\d{{1,6}})\s*)?\)",
+    re.IGNORECASE,
+)
+_LEFT_RIGHT_RE = re.compile(
+    rf"\b(Left|Right)\s*\(\s*({_LITERAL})\s*,\s*(\d{{1,6}})\s*\)",
+    re.IGNORECASE,
+)
+_CASE_TRIM_RE = re.compile(
+    rf"\b(UCase|LCase|Trim|LTrim|RTrim)\$?\s*\(\s*({_LITERAL})\s*\)",
+    re.IGNORECASE,
+)
+
+_CASE_TRIM_OPS = {
+    "ucase": str.upper, "lcase": str.lower,
+    "trim": str.strip, "ltrim": str.lstrip, "rtrim": str.rstrip,
+}
 
 _AMP_RE = re.compile(rf"({_LITERAL})\s*&\s*({_LITERAL})")
 
@@ -44,20 +71,16 @@ def looks_like_vbscript(text: str) -> bool:
 
 
 def resolve_chr(text: str):
-    """`Chr(72)` -> `"H"`."""
+    """`Chr(72)` -> `"H"`, including `Chr(71+1)` and `ChrW(&H48)`."""
     hits = 0
 
     def swap(match: re.Match) -> str:
         nonlocal hits
-        token = match.group(1)
-        try:
-            code = int(token[2:], 16) if token[:2].lower() == "&h" else int(token)
-        except ValueError:
-            return match.group(0)
-        if not 0 <= code <= 0x10FFFF:
+        char = PlagArith.to_char(match.group(1))
+        if char is None:
             return match.group(0)
         hits += 1
-        return _quote(chr(code))
+        return _quote(char)
 
     result = _CHR_RE.sub(swap, text)
     return result, hits > 0, f"{hits} character(s)" if hits else ""
@@ -91,8 +114,47 @@ def resolve_string_calls(text: str):
         target, find, sub = (_unquote(match.group(i)) for i in (1, 2, 3))
         return _quote(target.replace(find, sub))
 
-    text = _REVERSE_RE.sub(reverse, text)
-    text = _REPLACE_RE.sub(replace, text)
+    def split_join(match: re.Match) -> str:
+        nonlocal hits
+        hits += 1
+        target, sep, glue = (_unquote(match.group(i)) for i in (1, 2, 3))
+        parts = list(target) if sep == "" else target.split(sep)
+        return _quote(glue.join(parts))
+
+    def mid(match: re.Match) -> str:
+        nonlocal hits
+        target = _unquote(match.group(1))
+        # VBScript indexes from 1, not 0.
+        start = max(0, int(match.group(2)) - 1)
+        length = match.group(3)
+        hits += 1
+        return _quote(target[start:] if length is None
+                      else target[start:start + int(length)])
+
+    def left_right(match: re.Match) -> str:
+        nonlocal hits
+        which, target, count = match.group(1).lower(), _unquote(match.group(2)), int(match.group(3))
+        hits += 1
+        return _quote(target[:count] if which == "left" else target[-count:] if count else "")
+
+    def case_trim(match: re.Match) -> str:
+        nonlocal hits
+        op = _CASE_TRIM_OPS[match.group(1).lower()]
+        hits += 1
+        return _quote(op(_unquote(match.group(2))))
+
+    # Repeated, because folding an inner call can expose an outer one.
+    for _ in range(20):
+        before = text
+        text = _SPLIT_JOIN_RE.sub(split_join, text)
+        text = _REVERSE_RE.sub(reverse, text)
+        text = _REPLACE_RE.sub(replace, text)
+        text = _MID_RE.sub(mid, text)
+        text = _LEFT_RIGHT_RE.sub(left_right, text)
+        text = _CASE_TRIM_RE.sub(case_trim, text)
+        if text == before:
+            break
+
     return text, hits > 0, f"{hits} call(s)" if hits else ""
 
 

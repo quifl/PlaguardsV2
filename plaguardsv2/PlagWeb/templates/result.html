@@ -18,6 +18,11 @@
     <a class="btn btn-custom" id="downloadReportBtn" data-busy-link="Building your report…"
        data-base="{{ url_for('download_report', analysis_id=analysis.id) }}"
        href="{{ url_for('download_report', analysis_id=analysis.id) }}"><i class="bi bi-download"></i> Download Report</a>
+    {# The same findings as a spreadsheet, with the geolocation columns. #}
+    <a class="btn btn-outline" data-busy-link="Building the spreadsheet…"
+       href="{{ url_for('download_table', analysis_id=analysis.id, fmt='xlsx') }}"><i class="bi bi-file-earmark-spreadsheet"></i> Excel</a>
+    <a class="btn btn-outline" data-busy-link="Building the CSV…"
+       href="{{ url_for('download_table', analysis_id=analysis.id, fmt='csv') }}"><i class="bi bi-filetype-csv"></i> CSV</a>
   </div>
 </div>
 

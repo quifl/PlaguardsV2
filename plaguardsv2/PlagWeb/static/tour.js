@@ -26,7 +26,7 @@
         {
           target: "#navmenu", page: "/",
           title: "The main areas",
-          body: "New Analysis runs a script, History keeps your recent ones, Tutorial is where you are now, and Settings holds API keys and preferences.",
+          body: "Analyze runs a script, History keeps your recent ones, Tutorial is where you are now, and Settings holds API keys and preferences.",
           placement: "right",
         },
       ],
