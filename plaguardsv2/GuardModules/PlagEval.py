@@ -10,6 +10,7 @@ error.
 from __future__ import annotations
 
 import base64
+import re
 
 from .PlagTokens import Token, tokenize
 
@@ -215,15 +216,34 @@ class Parser:
         return results
 
     def parse_additive(self):
-        left = self.parse_unary()
+        left = self.parse_bitwise()
         while True:
             tok = self.peek()
             if tok is None or tok.kind != "op" or tok.value not in ("+", "-", "*", "/"):
                 break
             op = tok.value
             self.next()
-            right = self.parse_unary()
+            right = self.parse_bitwise()
             left = self._apply_arith(op, left, right)
+        return left
+
+    def parse_bitwise(self):
+        """`-bxor`, `-band`, `-bor` - how a per-character key is applied.
+
+        Binds tighter than `+` so `[char]($_ -bxor $k) + "x"` groups the way
+        PowerShell does.
+        """
+        left = self.parse_unary()
+        while True:
+            tok = self.peek()
+            if tok is None or tok.kind != "op":
+                break
+            op = tok.value.lower()
+            if op not in ("-bxor", "-band", "-bor"):
+                break
+            self.next()
+            right = self.parse_unary()
+            left = self._apply_bitwise(op, left, right)
         return left
 
     def parse_unary(self):
@@ -507,11 +527,41 @@ class Parser:
         except Exception:
             return UNKNOWN
 
+    def _apply_bitwise(self, op, left, right):
+        """Fold a bitwise operator over two integers."""
+        if left is UNKNOWN or right is UNKNOWN:
+            return UNKNOWN
+        try:
+            a, b = int(left), int(right)
+        except (TypeError, ValueError):
+            return UNKNOWN
+        if op == "-bxor":
+            return a ^ b
+        if op == "-band":
+            return a & b
+        if op == "-bor":
+            return a | b
+        return UNKNOWN
+
     def _apply_split(self, left, right):
+        """PowerShell's `-split` operator, whose separator is a *regex*.
+
+        This matters in practice: `-split "\\|"` means a literal pipe, and
+        splitting on the two characters instead returns the whole string
+        unchanged - which looked like the payload simply refusing to resolve.
+        The `.Split()` method is the literal one and is handled elsewhere.
+        """
         if left is UNKNOWN or right is UNKNOWN or not isinstance(left, str):
             return UNKNOWN
         sep = str(right)
-        return left.split(sep) if sep else list(left)
+        if not sep:
+            return list(left)
+        try:
+            return re.split(sep, left)
+        except re.error:
+            # Not a valid pattern - fall back to a literal split rather than
+            # losing the value entirely.
+            return left.split(sep)
 
     def _apply_replace(self, target, old, new):
         if target is UNKNOWN or old is UNKNOWN or new is UNKNOWN:

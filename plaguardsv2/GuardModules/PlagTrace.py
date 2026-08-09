@@ -185,7 +185,25 @@ def _collect_revealed(statement: str, variables: dict, result: TraceResult) -> N
 
 def enrichment_text(result: TraceResult) -> str:
     """Flatten resolved values into a plain block of text that PlagGrep can
-    scan, so resolved IOCs surface as real findings."""
-    parts = [f"{name} = {value}" for name, value in result.variables.items()]
-    parts.extend(result.revealed_strings)
+    scan, so resolved IOCs surface as real findings.
+
+    A resolved value is often still a stage - a Base64 blob, or a list of
+    character codes. Those are decoded here too: without it a script whose
+    only indicator lives one layer down reports no findings at all, even
+    though the dashboard was already showing the plaintext.
+    """
+    from . import PlagEncode
+
+    parts = []
+    for name, value in result.variables.items():
+        parts.append(f"{name} = {value}")
+        payload = PlagEncode.decode_payload(str(value))
+        if payload:
+            parts.append(payload[1])
+
+    for revealed in result.revealed_strings:
+        parts.append(revealed)
+        payload = PlagEncode.decode_payload(revealed)
+        if payload:
+            parts.append(payload[1])
     return "\n".join(parts)

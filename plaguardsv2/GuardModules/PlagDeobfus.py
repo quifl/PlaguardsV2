@@ -14,7 +14,7 @@ import re
 import zlib
 from dataclasses import dataclass, field
 
-from . import PlagCmd, PlagEncode, PlagFold, PlagJs, PlagVbs
+from . import PlagCmd, PlagEncode, PlagFold, PlagJs, PlagLoader, PlagVbs
 from .regex_utils import abbreviated_flag
 
 MAX_PASSES = 10
@@ -188,6 +188,7 @@ def run(source: str) -> DeobfuscationResult:
         ("stripped junk backtick escapes", _strip_junk_backticks),
         ("stripped redundant [string] cast(s)", _strip_redundant_casts),
         ("decoded standalone encoded payload(s)", _decode_standalone_payloads),
+        ("recovered XOR-decoded byte-array payload", PlagLoader.recover_xor_loop),
     ]
     passes += _language_passes(source)
 
@@ -664,7 +665,10 @@ def _decode_frombase64_literals(text: str):
             try:
                 decoded = inflated.decode("utf-8")
             except UnicodeDecodeError:
-                decoded = inflated.decode("latin-1", errors="replace")
+                # Still binary: an encrypted or XOR-ed stage, not text. Leave
+                # the call alone - rendering it as latin-1 mojibake destroys
+                # the bytes that a later pass needs to recover the payload.
+                return m.group(0)
         count[0] += 1
         return _make_ps_literal(decoded)
 
