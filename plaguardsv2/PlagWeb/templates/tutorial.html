@@ -235,6 +235,11 @@
     <li><strong>Threat Intel API Keys</strong> &mdash; one field per provider. A green box
       means configured, red means that provider is skipped. Each row links to where you
       get a key. Saving a blank field leaves the stored key alone.</li>
+    <li><strong>Geolocation Databases</strong> &mdash; one field each for MaxMind's
+      GeoLite2 City, Country and ASN. Each accepts a <span class="mono">.mmdb</span>,
+      a folder, or the <span class="mono">.tar.gz</span> exactly as downloaded. Fill in
+      any mix and they are merged into one record per address; the section carries
+      step-by-step instructions for obtaining them.</li>
     <li><strong>General</strong> &mdash; how many analyses to keep, the analyst or
       organisation name printed on reports, and the UTC offset used for every timestamp
       in reports and History.</li>

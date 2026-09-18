@@ -42,7 +42,7 @@ def severity_bar_chart(counts: dict) -> str:
         spine.set_visible(False)
     ax.xaxis.grid(True, color="#9aa4b5", linewidth=0.5)
     ax.set_axisbelow(True)
-    for bar, value in zip(bars, values):
+    for bar, value in zip(bars, values, strict=True):
         if value:
             ax.text(bar.get_width() + max(values) * 0.02, bar.get_y() + bar.get_height() / 2,
                      str(value), va="center", fontsize=8.5, color="#000000")

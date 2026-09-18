@@ -69,7 +69,11 @@ def all_keys(conn: sqlite3.Connection | None) -> dict:
 
 # --- General app settings (not API keys, but stored the same way) ---------
 
-GEOIP_DB_KEY = "GEOIP_DB_PATH"
+GEOIP_DB_KEYS = {
+    "city": "GEOIP_CITY_DB_PATH",
+    "country": "GEOIP_COUNTRY_DB_PATH",
+    "asn": "GEOIP_ASN_DB_PATH",
+}
 HISTORY_LIMIT_KEY = "HISTORY_LIMIT"
 ANALYST_NAME_KEY = "ANALYST_NAME"
 UTC_OFFSET_KEY = "UTC_OFFSET"
@@ -98,24 +102,30 @@ def set_history_limit(conn: sqlite3.Connection, limit: int) -> None:
     PlagStore.set_setting(conn, HISTORY_LIMIT_KEY, str(max(1, int(limit))))
 
 
-def get_geoip_db_path(conn: sqlite3.Connection | None) -> str:
-    """Path to a local MaxMind GeoLite2 database, if one is configured.
-
-    Preferred over the hosted lookup: the address never leaves the machine.
+def get_geoip_db_path(conn: sqlite3.Connection | None, kind: str) -> str:
+    """Path to one local MaxMind GeoLite2 database - `kind` is 'city',
+    'country' or 'asn'. Preferred over the hosted lookup: the address never
+    leaves the machine.
     """
     from . import PlagStore
 
+    key = GEOIP_DB_KEYS[kind]
     value = ""
     if conn is not None:
-        value = PlagStore.get_setting(conn, GEOIP_DB_KEY) or ""
-    value = value or os.environ.get(GEOIP_DB_KEY, "")
+        value = PlagStore.get_setting(conn, key) or ""
+    value = value or os.environ.get(key, "")
     return value.strip()
 
 
-def set_geoip_db_path(conn: sqlite3.Connection, path: str) -> None:
+def get_geoip_db_paths(conn: sqlite3.Connection | None) -> dict:
+    """All three configured GeoLite2 paths at once, keyed by kind."""
+    return {kind: get_geoip_db_path(conn, kind) for kind in GEOIP_DB_KEYS}
+
+
+def set_geoip_db_path(conn: sqlite3.Connection, kind: str, path: str) -> None:
     from . import PlagStore
 
-    PlagStore.set_setting(conn, GEOIP_DB_KEY, (path or "").strip())
+    PlagStore.set_setting(conn, GEOIP_DB_KEYS[kind], (path or "").strip())
 
 
 def get_analyst_name(conn: sqlite3.Connection | None) -> str:

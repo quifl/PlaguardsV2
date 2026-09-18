@@ -53,6 +53,17 @@ EXPLANATIONS = [
      "this is usually where the payload's real output becomes visible."),
     ("truncated",
      "The input exceeded the size limit and was cut short before analysis."),
+    ("JScript string method chain",
+     "A chain of JScript string methods (e.g. .replace(), .split(), .concat()) "
+     "run on literal values was resolved to its result."),
+    ("IOC check",
+     "Extracted indicators were looked up against whichever threat-intel "
+     "providers are configured in Settings; a provider with no key is simply "
+     "skipped, not treated as clean."),
+    ("Geolocation",
+     "Public IP addresses among the findings were located via the configured "
+     "GeoLite2 database or ipinfo.io, to show whether the traffic's "
+     "destination makes sense."),
 ]
 
 

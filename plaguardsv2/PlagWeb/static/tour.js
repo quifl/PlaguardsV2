@@ -181,8 +181,14 @@
         {
           target: ".settings-form", page: "/settings",
           title: "Threat-intel API keys",
-          body: "Add keys for any of the seven providers. Green means configured, red means that provider is skipped. Leaving a field blank keeps the stored key.",
+          body: "Add keys for any of the providers listed. Green means configured, red means that provider is skipped. Leaving a field blank keeps the stored key.",
           placement: "right",
+        },
+        {
+          target: "#geoSection", page: "/settings",
+          title: "Geolocation databases",
+          body: "Point these at MaxMind's GeoLite2 City, Country and ASN files — a .mmdb, a folder, or the .tar.gz as downloaded. Whichever you fill in are merged into one record per address, and nothing leaves this machine.",
+          placement: "top",
         },
         {
           target: "#generalSection", page: "/settings",

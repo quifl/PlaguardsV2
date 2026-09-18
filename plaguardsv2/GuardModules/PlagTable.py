@@ -68,7 +68,8 @@ def build_rows(analysis: dict, geo: dict | None = None) -> list[dict]:
     geo = geo or {}
     rows = []
     for index, finding in enumerate(analysis.get("findings") or [], 1):
-        get = finding.get if isinstance(finding, dict) else lambda k, d=None: getattr(finding, k, d)
+        get = finding.get if isinstance(finding, dict) \
+            else lambda k, d=None, finding=finding: getattr(finding, k, d)
         value = str(get("value", "") or "")
         ftype = get("type", "") or ""
         verdict, detail = _intel_summary(get("intel", {}) or {})

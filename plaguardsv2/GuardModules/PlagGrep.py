@@ -255,11 +255,13 @@ def scan(original: str, deobfuscated: str, resolved: str = "") -> list[Finding]:
         if key not in findings:
             findings[key] = f
 
-    sources = [("deobfuscated", deobfuscated), ("original", original)]
+    # Resolved values first: the same indicator found there and in the raw
+    # text is kept from there, where it is already whole.
+    sources = [deobfuscated, original]
     if resolved:
-        sources.insert(0, ("resolved", resolved))
+        sources.insert(0, resolved)
 
-    for source_name, raw_text in sources:
+    for raw_text in sources:
         text = refang(raw_text)
         was_defanged = text != raw_text
 

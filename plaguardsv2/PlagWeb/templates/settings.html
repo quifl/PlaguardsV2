@@ -28,6 +28,43 @@
   </form>
 </div>
 
+<div class="settings-section" id="geoSection">
+  <h3>Geolocation Databases</h3>
+  <p class="lede">All optional - a field left blank is simply skipped. Point at MaxMind's local GeoLite2 databases and lookups never leave this machine; fill in any mix of the three and they're merged into one record per address.</p>
+  <ol class="settings-steps">
+    <li>Create a free account at MaxMind's <a href="https://www.maxmind.com/en/geolite2/signup" target="_blank" rel="noopener">GeoLite2 signup page</a>.</li>
+    <li>Once signed in, open <strong>Manage License Keys</strong> under your account and generate one - MaxMind requires it before any database can be downloaded.</li>
+    <li>Go to <strong>Download Files</strong> and grab GeoLite2-City, GeoLite2-Country and GeoLite2-ASN. The <span class="mono">.tar.gz</span> works as-is below - no need to extract it first.</li>
+    <li>Paste each downloaded file's path into the matching field.</li>
+  </ol>
+  <form method="post" action="{{ url_for('settings') }}" class="settings-form">
+    <input type="hidden" name="form" value="geoip" />
+    <div class="settings-row">
+      <label for="geoip_city_db">GeoLite2 City database</label>
+      <input type="text" id="geoip_city_db" name="geoip_city_db" value="{{ geoip_db_paths.city }}"
+             placeholder="C:\path\to\GeoLite2-City.mmdb" />
+      <span class="field-hint">city, coordinates, country, continent, network</span>
+      <a class="docs-link" href="https://dev.maxmind.com/geoip/geolite2-free-geolocation-data"
+         target="_blank" rel="noopener" data-no-busy>Get the DBs <i class="bi bi-box-arrow-up-right"></i></a>
+    </div>
+    <div class="settings-row">
+      <label for="geoip_country_db">GeoLite2 Country database</label>
+      <input type="text" id="geoip_country_db" name="geoip_country_db" value="{{ geoip_db_paths.country }}"
+             placeholder="C:\path\to\GeoLite2-Country.mmdb" />
+      <span class="field-hint">country/continent fallback when City has no match</span>
+    </div>
+    <div class="settings-row">
+      <label for="geoip_asn_db">GeoLite2 ASN database</label>
+      <input type="text" id="geoip_asn_db" name="geoip_asn_db" value="{{ geoip_db_paths.asn }}"
+             placeholder="C:\path\to\GeoLite2-ASN.mmdb" />
+      <span class="field-hint">operator name and network, layered on top of either</span>
+    </div>
+    <div class="settings-actions">
+      <button type="submit" class="btn btn-custom" data-busy="Saving geolocation settings…">Save Geolocation Settings</button>
+    </div>
+  </form>
+</div>
+
 <div class="settings-section" id="generalSection">
   <h3>General</h3>
   <p class="lede">Personalize how PlaguardsV2 stores history and attributes reports.</p>
@@ -35,26 +72,30 @@
     <input type="hidden" name="form" value="general" />
     <div class="settings-row">
       <label for="history_limit">Keep this many analyses</label>
-      <input type="number" id="history_limit" name="history_limit" min="1" max="1000" value="{{ history_limit }}" />
-      <span class="docs-link">oldest are auto-deleted beyond this</span>
+      <div class="number-field">
+        <input type="number" id="history_limit" name="history_limit" min="1" max="1000" value="{{ history_limit }}" />
+        <span class="number-steppers">
+          <button type="button" class="number-step" data-step="up" aria-label="Increase"><i class="bi bi-chevron-up"></i></button>
+          <button type="button" class="number-step" data-step="down" aria-label="Decrease"><i class="bi bi-chevron-down"></i></button>
+        </span>
+      </div>
+      <span class="field-hint">oldest are auto-deleted beyond this</span>
     </div>
     <div class="settings-row">
       <label for="analyst_name">Analyst / organization name</label>
       <input type="text" id="analyst_name" name="analyst_name" value="{{ analyst_name }}" placeholder="shown on PDF reports" />
-      <span class="docs-link">optional</span>
-    </div>
-    <div class="settings-row">
-      <label for="geoip_db">GeoLite2 database (optional)</label>
-      <input type="text" id="geoip_db" name="geoip_db" value="{{ geoip_db }}"
-             placeholder="C:\path\to\GeoLite2-City.mmdb" />
-      <span class="docs-link">offline IP geolocation</span>
-      <a class="docs-link" href="https://dev.maxmind.com/geoip/geolite2-free-geolocation-data"
-         target="_blank" rel="noopener" data-no-busy>Get the DB <i class="bi bi-box-arrow-up-right"></i></a>
+      <span class="field-hint">optional</span>
     </div>
     <div class="settings-row">
       <label for="utc_offset">Time zone (UTC offset)</label>
-      <input type="number" id="utc_offset" name="utc_offset" step="0.5" min="-12" max="14" value="{{ utc_offset }}" />
-      <span class="docs-link">used for report &amp; history timestamps</span>
+      <div class="number-field">
+        <input type="number" id="utc_offset" name="utc_offset" step="0.5" min="-12" max="14" value="{{ utc_offset }}" />
+        <span class="number-steppers">
+          <button type="button" class="number-step" data-step="up" aria-label="Increase"><i class="bi bi-chevron-up"></i></button>
+          <button type="button" class="number-step" data-step="down" aria-label="Decrease"><i class="bi bi-chevron-down"></i></button>
+        </span>
+      </div>
+      <span class="field-hint">used for report &amp; history timestamps</span>
     </div>
     <div class="settings-actions">
       <button type="submit" class="btn btn-custom" data-busy="Saving settings…">Save General Settings</button>

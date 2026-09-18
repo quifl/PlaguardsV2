@@ -96,6 +96,7 @@
     {% if lookup %}
     <div class="lookup-results">
       {% if lookup.note %}<p class="lookup-note">{{ lookup.note }}</p>{% endif %}
+      {% if lookup.scope_note %}<p class="lookup-note">{{ lookup.scope_note }}</p>{% endif %}
       {% if lookup.type is none %}
       {% elif not lookup.results %}
         <p class="muted">No configured provider returned data for this {{ lookup.type }} ({{ lookup.value }}). Add API keys in <a href="{{ url_for('settings') }}">Settings</a> to enable lookups.</p>
@@ -117,6 +118,15 @@
           <span class="intel-detail">{{ r.detail }}</span>
         </div>
         {% endif %}
+        {% endfor %}
+      {% endif %}
+      {% if lookup.geo_rows %}
+        <p class="muted lookup-geo-heading">Geolocation:</p>
+        {% for row in lookup.geo_rows %}
+        <div class="lookup-result-row">
+          <span class="geo-label">{{ row.label }}</span>
+          <span class="intel-detail">{{ row.value }}</span>
+        </div>
         {% endfor %}
       {% endif %}
     </div>

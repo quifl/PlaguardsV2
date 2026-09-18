@@ -9,7 +9,9 @@ enriches extracted addresses with geographic, network and DNS detail.
 Two sources, in order of preference:
 
   1. A local MaxMind GeoLite2 database, if one is configured. Fully offline -
-     the address never leaves the machine.
+     the address never leaves the machine. City and Country give place and
+     network; ASN gives the operator. All three can be pointed at together -
+     see `_resolve_databases` - and are merged into one record.
   2. ipinfo.io, if a token is configured. One request per address, cached.
 
 Reverse DNS is done with the standard library and is independent of both.
@@ -20,8 +22,10 @@ from __future__ import annotations
 
 import ipaddress
 import socket
+import tarfile
+from pathlib import Path
 
-from . import PlagConfig
+from . import PlagConfig, PlagGrep
 from .PlagProviders.base import explain_http, safe_json_request
 
 # What the tabular export and the report show per address.
@@ -77,23 +81,98 @@ def reverse_dns(value: str) -> str:
         socket.setdefaulttimeout(previous)
 
 
-def _from_maxmind(value: str, db_path: str) -> dict | None:
-    """Look the address up in a local GeoLite2 database.
+_ARCHIVE_SUFFIXES = (".tar.gz", ".tgz")
+_KIND_HINTS = ("asn", "city", "country")  # checked in this order; no name matches two
 
-    Optional: geoip2 is only imported if a database is actually configured,
-    so the package stays installable without it.
+
+def _classify(filename: str) -> str | None:
+    """Which of ASN / City / Country a GeoLite2 file is, from its name."""
+    lowered = filename.lower()
+    for kind in _KIND_HINTS:
+        if kind in lowered:
+            return kind
+    return None
+
+
+def _extract_archive(archive: Path, cache_dir: Path) -> Path:
+    """Unpack a MaxMind `.tar.gz` download once, reusing it on later calls.
+
+    MaxMind's own downloads arrive as an archive, not a bare `.mmdb`, so this
+    lets Settings simply be pointed at the folder those downloads land in.
     """
+    stem = archive.name
+    for suffix in _ARCHIVE_SUFFIXES:
+        if stem.lower().endswith(suffix):
+            stem = stem[: -len(suffix)]
+            break
+    dest = cache_dir / stem
+    if dest.is_dir() and any(dest.rglob("*.mmdb")):
+        return dest
+    dest.mkdir(parents=True, exist_ok=True)
+    try:
+        with tarfile.open(archive) as tar:
+            tar.extractall(dest, filter="data")
+    except Exception:
+        pass  # left empty; the caller's glob simply finds nothing
+    return dest
+
+
+def _pick(mmdbs: list[Path], kind: str) -> str | None:
+    """The database matching `kind` if the name says so, else whatever's
+    there - a folder or archive pointed at for one specific kind normally
+    holds exactly one database anyway."""
+    for mmdb in mmdbs:
+        if _classify(mmdb.name) == kind:
+            return str(mmdb)
+    return str(mmdbs[0]) if mmdbs else None
+
+
+def _resolve_one(path: str, kind: str, cache_dir: Path | None = None) -> str | None:
+    """The `.mmdb` file for one GeoLite2 database - `kind` is 'city',
+    'country' or 'asn', matching the Settings field `path` came from.
+
+    `path` may be a bare `.mmdb` file (used as-is, trusting the field it was
+    entered in), MaxMind's `.tar.gz` download, or a folder holding either.
+    """
+    if not path:
+        return None
+    root = Path(path)
+    if not root.exists():
+        return None
+
+    if cache_dir is None:
+        cache_dir = Path("data") / "geolite2_cache"
+
+    if root.is_file():
+        if root.name.lower().endswith(_ARCHIVE_SUFFIXES):
+            return _pick(sorted(_extract_archive(root, cache_dir).rglob("*.mmdb")), kind)
+        return str(root)
+
+    mmdbs = sorted(root.rglob("*.mmdb"))
+    if not mmdbs:
+        for suffix in _ARCHIVE_SUFFIXES:
+            for archive in sorted(root.rglob(f"*{suffix}")):
+                mmdbs += sorted(_extract_archive(archive, cache_dir).rglob("*.mmdb"))
+    return _pick(mmdbs, kind)
+
+
+def _maxmind_reader(db_path: str, method: str, value: str):
+    """Open one database, run one lookup, and always close it again."""
     try:
         import geoip2.database
     except ImportError:
         return None
-
     try:
         with geoip2.database.Reader(db_path) as reader:
-            record = reader.city(value)
+            return getattr(reader, method)(value)
     except Exception:
         return None
 
+
+def _from_maxmind_city(value: str, db_path: str) -> dict | None:
+    record = _maxmind_reader(db_path, "city", value)
+    if record is None:
+        return None
     return {
         "city": record.city.name or "",
         "latitude": record.location.latitude,
@@ -101,11 +180,69 @@ def _from_maxmind(value: str, db_path: str) -> dict | None:
         "country": record.country.name or "",
         "country_code": record.country.iso_code or "",
         "continent": record.continent.name or "",
-        "asn": "",
-        "organization": record.traits.autonomous_system_organization or "",
         "network": str(record.traits.network or ""),
-        "source": "MaxMind GeoLite2 (local)",
     }
+
+
+def _from_maxmind_country(value: str, db_path: str) -> dict | None:
+    record = _maxmind_reader(db_path, "country", value)
+    if record is None:
+        return None
+    return {
+        "country": record.country.name or "",
+        "country_code": record.country.iso_code or "",
+        "continent": record.continent.name or "",
+        "network": str(record.traits.network or ""),
+    }
+
+
+def _from_maxmind_asn(value: str, db_path: str) -> dict | None:
+    record = _maxmind_reader(db_path, "asn", value)
+    if record is None:
+        return None
+    number = record.autonomous_system_number
+    return {
+        "asn": f"AS{number}" if number else "",
+        "organization": record.autonomous_system_organization or "",
+        "network": str(record.network or ""),
+    }
+
+
+def _from_maxmind(value: str, dbs: dict[str, str]) -> dict | None:
+    """Merge whichever of City / Country / ASN are configured.
+
+    City wins over Country when both are present - it is a strict superset -
+    but ASN is always consulted on top of either, since it is kept current
+    independently and is the only source for the operator name.
+    """
+    result: dict = {}
+    sources = []
+
+    place = None
+    if dbs.get("city"):
+        place = _from_maxmind_city(value, dbs["city"])
+        if place is not None:
+            sources.append("City")
+    if place is None and dbs.get("country"):
+        place = _from_maxmind_country(value, dbs["country"])
+        if place is not None:
+            sources.append("Country")
+    if place:
+        result.update(place)
+
+    if dbs.get("asn"):
+        asn_info = _from_maxmind_asn(value, dbs["asn"])
+        if asn_info is not None:
+            sources.append("ASN")
+            result["asn"] = asn_info["asn"]
+            result["organization"] = asn_info["organization"]
+            if not result.get("network"):
+                result["network"] = asn_info["network"]
+
+    if not sources:
+        return None
+    result["source"] = "MaxMind GeoLite2 (local: " + " + ".join(sources) + ")"
+    return result
 
 
 def _from_ipinfo(value: str, token: str) -> dict | None:
@@ -167,9 +304,14 @@ def locate(value: str, conn=None) -> dict:
 
     result["reverse_dns"] = reverse_dns(value)
 
-    db_path = PlagConfig.get_geoip_db_path(conn)
-    if db_path:
-        found = _from_maxmind(value, db_path)
+    configured = PlagConfig.get_geoip_db_paths(conn)
+    if any(configured.values()):
+        dbs = {
+            kind: _resolve_one(path, kind)
+            for kind, path in configured.items() if path
+        }
+        dbs = {kind: db for kind, db in dbs.items() if db}
+        found = _from_maxmind(value, dbs) if dbs else None
         if found:
             result.update(found)
             return result
@@ -204,3 +346,42 @@ def enrich(findings: list, conn=None) -> dict:
         if value and value not in seen:
             seen[value] = locate(value, conn)
     return seen
+
+
+def describe(record: dict | None) -> list[dict]:
+    """A `locate()` record as label/value rows for display - the PDF report
+    and the Quick IOC Lookup page both turn one of these into the same
+    layout, so the formatting lives here rather than in either caller.
+
+    Only the fields that actually came back are included, in a fixed
+    reading order. A record with nothing locatable (private, reserved, no
+    source configured) collapses to a single row explaining why.
+    """
+    if not record:
+        return []
+    if record.get("note"):
+        return [{"label": "Note", "value": record["note"]}]
+
+    rows = []
+    if record.get("city"):
+        rows.append({"label": "City", "value": record["city"]})
+    if record.get("country"):
+        code = f" ({record['country_code']})" if record.get("country_code") else ""
+        rows.append({"label": "Country", "value": record["country"] + code})
+    if record.get("continent"):
+        rows.append({"label": "Continent", "value": record["continent"]})
+    if record.get("latitude") is not None and record.get("longitude") is not None:
+        rows.append({"label": "Coordinates",
+                     "value": f"{record['latitude']}, {record['longitude']}"})
+    if record.get("organization"):
+        asn = f" ({record['asn']})" if record.get("asn") else ""
+        rows.append({"label": "Operator", "value": record["organization"] + asn})
+    elif record.get("asn"):
+        rows.append({"label": "ASN", "value": record["asn"]})
+    if record.get("network"):
+        rows.append({"label": "Network", "value": PlagGrep.defang_text(record["network"])})
+    if record.get("reverse_dns"):
+        rows.append({"label": "Reverse DNS", "value": PlagGrep.defang_text(record["reverse_dns"])})
+    if record.get("source"):
+        rows.append({"label": "Source", "value": record["source"]})
+    return rows

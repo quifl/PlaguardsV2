@@ -514,6 +514,14 @@
     <td>{{ f.scope_note }}</td>
   </tr>
   {% endif %}
+  {% if f.geo_rows %}
+  {% for row in f.geo_rows %}
+  <tr>
+    {% if loop.first %}<td class="dk" rowspan="{{ f.geo_rows|length }}">Geolocation</td>{% endif %}
+    <td><b>{{ row.label }}</b> &mdash; {{ row.value }}</td>
+  </tr>
+  {% endfor %}
+  {% endif %}
   <tr>
     <td class="dk">Analyst verdict</td>
     <td class="c-{{ f.triage_status }}">{{ f.verdict_label }}{% if f.triage_note %} &nbsp;{{ f.triage_note }}{% endif %}</td>
@@ -531,7 +539,7 @@
   {% for row in s.pass_log_display %}
   <tr>
     <td>{{ row.entry }}</td>
-    <td>{{ row.why or "&mdash;" }}</td>
+    <td>{{ row.why or "—" }}</td>
   </tr>
   {% endfor %}
 </table>

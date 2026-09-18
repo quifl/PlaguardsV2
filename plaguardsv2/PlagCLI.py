@@ -68,7 +68,7 @@ def analyze(path, no_intel, no_cache, no_store, triage, pdf_path, json_path, red
         analyst_name = PlagConfig.get_analyst_name(conn)
         pdf_bytes = PlagReport.render_pdf(
             result, analyst_name=analyst_name, utc_offset=PlagConfig.get_utc_offset(conn),
-            redact_iocs=redact_iocs
+            redact_iocs=redact_iocs, conn=conn,
         )
         with open(pdf_path, "wb") as fh:
             fh.write(pdf_bytes)

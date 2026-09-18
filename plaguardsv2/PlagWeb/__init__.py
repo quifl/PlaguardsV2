@@ -8,7 +8,7 @@ from pathlib import Path
 
 from flask import Flask, Response, flash, g, jsonify, redirect, render_template, request, url_for
 
-from ..GuardModules import PlagBatch, PlagConfig, PlagEngine, PlagFilter, PlagGrep, PlagIntel, PlagReport
+from ..GuardModules import PlagBatch, PlagConfig, PlagEngine, PlagGrep, PlagIntel, PlagReport
 from ..GuardModules import PlagGeo, PlagLinks, PlagStore, PlagTable
 
 VALID_STATUSES = {"confirmed_threat", "false_positive", "unreviewed", "unknown"}
@@ -151,16 +151,29 @@ def create_app(db_path: str | None = None) -> Flask:
             finding = PlagGrep.Finding(type=ioc_type, value=refanged)
             conn = get_db()
             PlagIntel.enrich([finding], conn=conn, use_cache=True)
+            # Every provider that supports this indicator type is shown, not
+            # just the ones that returned a verdict - a provider with no key
+            # configured is "not checked", not invisible. Checked providers
+            # sort first so the real answers aren't buried under those.
+            scope = finding.intel.get("scope")
             results = [
                 {
                     "label": PlagConfig.get_provider_label(source),
                     "url": PlagLinks.reference_url(source, ioc_type, refanged),
                     **r,
                 }
-                for source, r in finding.intel.items() if r.get("verdict") != "not_checked"
+                for source, r in sorted(
+                    finding.intel.items(),
+                    key=lambda item: (item[1].get("verdict") == "not_checked",
+                                       PlagConfig.get_provider_label(item[0])),
+                )
+                if source != "scope"
             ]
+            geo_rows = PlagGeo.describe(PlagGeo.locate(refanged, conn)) if ioc_type == "ip" else []
             lookup = {"value": refanged, "type": ioc_type, "requested": requested,
-                      "note": note, "results": results}
+                      "note": note, "results": results,
+                      "scope_note": scope.get("detail", "") if scope else "",
+                      "geo_rows": geo_rows}
         return render_template("index.html", lookup=lookup)
 
     @app.route("/analysis/<int:analysis_id>")
@@ -239,6 +252,7 @@ def create_app(db_path: str | None = None) -> Flask:
             analyst_name=analyst_name,
             utc_offset=PlagConfig.get_utc_offset(conn),
             redact_iocs=redact_iocs,
+            conn=conn,
         )
         suffix = "-redacted" if redact_iocs else ""
         return Response(
@@ -298,7 +312,9 @@ def create_app(db_path: str | None = None) -> Flask:
         rows = PlagTable.build_rows(data, geo)
         stem = f"plaguardsv2-findings-{analysis_id}"
         if fmt == "csv":
-            payload, mimetype = PlagTable.to_csv(rows), "text/csv; charset=utf-8"
+            # Bare mimetype only: Flask appends "; charset=utf-8" to any
+            # text/* itself, so spelling it out here sends it twice.
+            payload, mimetype = PlagTable.to_csv(rows), "text/csv"
         else:
             if not PlagTable.xlsx_available():
                 flash("Excel export needs openpyxl - install it, or use CSV.", "error")
@@ -350,6 +366,7 @@ def create_app(db_path: str | None = None) -> Flask:
             analyst_name=PlagConfig.get_analyst_name(conn),
             utc_offset=PlagConfig.get_utc_offset(conn),
             redact_iocs=request.args.get("redact") == "1",
+            conn=conn,
         )
         return Response(
             pdf_bytes, mimetype="application/pdf",
@@ -385,7 +402,7 @@ def create_app(db_path: str | None = None) -> Flask:
                 return redirect(url_for("history"))
             pdf_bytes = PlagReport.render_combined_pdf(
                 analyses, analyst_name=analyst_name, utc_offset=utc_offset,
-                redact_iocs=redact_iocs,
+                redact_iocs=redact_iocs, conn=conn,
             )
             return Response(
                 pdf_bytes,
@@ -402,7 +419,7 @@ def create_app(db_path: str | None = None) -> Flask:
                     continue
                 pdf_bytes = PlagReport.render_pdf(
                     data, analyst_name=analyst_name, utc_offset=utc_offset,
-                    redact_iocs=redact_iocs,
+                    redact_iocs=redact_iocs, conn=conn,
                 )
                 zf.writestr(f"plaguardsv2-report-{analysis_id}.pdf", pdf_bytes)
         buf.seek(0)
@@ -426,7 +443,6 @@ def create_app(db_path: str | None = None) -> Flask:
                 if limit.isdigit():
                     PlagConfig.set_history_limit(conn, int(limit))
                 PlagConfig.set_analyst_name(conn, request.form.get("analyst_name", ""))
-                PlagConfig.set_geoip_db_path(conn, request.form.get("geoip_db", ""))
                 offset = request.form.get("utc_offset", "").strip()
                 if offset:
                     try:
@@ -434,6 +450,10 @@ def create_app(db_path: str | None = None) -> Flask:
                     except ValueError:
                         flash("UTC offset must be a number between -12 and +14.", "error")
                 flash("General settings saved.", "success")
+            elif form_type == "geoip":
+                for kind in PlagConfig.GEOIP_DB_KEYS:
+                    PlagConfig.set_geoip_db_path(conn, kind, request.form.get(f"geoip_{kind}_db", ""))
+                flash("Geolocation settings saved.", "success")
             elif form_type == "clear_history":
                 PlagStore.delete_all_analyses(conn)
                 flash("All analysis history cleared.", "success")
@@ -453,7 +473,7 @@ def create_app(db_path: str | None = None) -> Flask:
             history_limit=PlagConfig.get_history_limit(conn),
             analyst_name=PlagConfig.get_analyst_name(conn),
             utc_offset=PlagConfig.get_utc_offset(conn),
-            geoip_db=PlagConfig.get_geoip_db_path(conn),
+            geoip_db_paths=PlagConfig.get_geoip_db_paths(conn),
         )
 
     return app

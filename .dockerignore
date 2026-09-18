@@ -7,3 +7,16 @@ data/
 .git/
 .pytest_cache/
 *.pdf
+
+# Local scratch notes hold live API keys - they must never reach an image.
+tests/test_and_notes.md
+
+# MaxMind downloads: ~40 MB, licensed per-user, and configured by path at
+# runtime rather than shipped. Mount them in instead of baking them in.
+plaguardsv2/GeoLite2/
+
+# Not needed to run the app. samples/ is NOT listed: the Tutorial page's
+# "Run the example script" button reads samples/example-analysis.ps1 at
+# runtime, so excluding it would break that button inside a container.
+tests/
+install.ps1

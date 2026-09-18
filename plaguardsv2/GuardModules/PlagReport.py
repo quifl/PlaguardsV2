@@ -13,7 +13,7 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 import pypdf
 from xhtml2pdf import pisa
 
-from . import (PlagCharts, PlagConfig, PlagEncode, PlagExplain, PlagGrep,
+from . import (PlagCharts, PlagConfig, PlagEncode, PlagExplain, PlagGeo, PlagGrep,
                PlagMitre, PlagWatermark)
 
 TEMPLATE_DIR = Path(__file__).parent / "report_templates"
@@ -128,14 +128,25 @@ def _as_dict(f, index: int) -> dict:
     # one more source in the list.
     scope = intel.get("scope")
     d["scope_note"] = scope.get("detail", "") if scope else ""
+    # Every provider that supports this indicator type is listed - not just
+    # the ones that returned a verdict - so the report shows what wasn't
+    # checked (and why) as plainly as what was. Checked providers sort first;
+    # a page of "no API key configured" rows would bury the answer.
     d["intel_display"] = [
         {"label": _PROVIDER_LABELS.get(source, source), **result}
-        for source, result in sorted(intel.items())
-        if source != "scope" and result.get("verdict") != "not_checked"
+        for source, result in sorted(
+            intel.items(),
+            key=lambda item: (item[1].get("verdict") == "not_checked",
+                               _PROVIDER_LABELS.get(item[0], item[0])),
+        )
+        if source != "scope"
     ]
     # A single headline verdict for the overview table: worst wins, so a row
-    # can be read at a glance without expanding every provider.
-    d["intel_summary"] = _summarise_intel(d["intel_display"], scope)
+    # can be read at a glance without expanding every provider. Unchecked
+    # providers don't count toward it, or an all-unconfigured indicator would
+    # read as "unknown" instead of plainly "not checked".
+    checked = [r for r in d["intel_display"] if r.get("verdict") != "not_checked"]
+    d["intel_summary"] = _summarise_intel(checked, scope)
     d["verdict_label"] = str(d.get("triage_status", "unreviewed")).replace("_", " ")
     return d
 
@@ -182,6 +193,25 @@ def _summarise_intel(intel_display: list[dict], scope: dict | None = None) -> di
         if len(names) > 3:
             note += f" +{len(names) - 3} more"
     return {"verdict": headline, "text": _VERDICT_TEXT.get(headline, headline), "note": note}
+
+
+def _geo_host(finding: dict) -> str:
+    value = str(finding.get("value", ""))
+    return value.rsplit(":", 1)[0] if finding.get("type") == "ip_port" else value
+
+
+def _geo_for_findings(findings: list[dict], conn) -> dict[str, dict]:
+    """Geolocation for every address among the findings, computed live -
+    the same approach the spreadsheet export already uses, so a report run
+    before a GeoIP database was configured still comes back enriched."""
+    geo: dict[str, dict] = {}
+    for f in findings:
+        if f.get("type") not in ("ip", "ip_port"):
+            continue
+        host = _geo_host(f)
+        if host and host not in geo:
+            geo[host] = PlagGeo.locate(host, conn)
+    return geo
 
 
 def _resolved_row(name: str, value) -> dict:
@@ -263,11 +293,14 @@ def _source_line(analysis: dict) -> str:
 
 
 def build_report_context(analysis: dict, analyst_name: str = "", utc_offset: float | None = None,
-                          redact_iocs: bool = False) -> dict:
+                          redact_iocs: bool = False, conn=None) -> dict:
     if utc_offset is None:
         utc_offset = PlagConfig.DEFAULT_UTC_OFFSET
 
     findings = [_as_dict(f, i + 1) for i, f in enumerate(analysis.get("findings", []))]
+    geo_map = _geo_for_findings(findings, conn)
+    for f in findings:
+        f["geo_rows"] = PlagGeo.describe(geo_map.get(_geo_host(f))) if f.get("type") in ("ip", "ip_port") else []
     severity_counts = _severity_counts(findings)
     triage_counts = _triage_counts(findings)
     normalized = {**analysis, "findings": findings}
@@ -389,13 +422,14 @@ def _combined_toc(sections: list[dict]) -> list[dict]:
 
 
 def render_html(analysis: dict, analyst_name: str = "", utc_offset: float | None = None,
-                 redact_iocs: bool = False) -> str:
+                 redact_iocs: bool = False, conn=None) -> str:
     template = _env.get_template("report.html")
-    return template.render(**build_report_context(analysis, analyst_name, utc_offset, redact_iocs))
+    return template.render(**build_report_context(analysis, analyst_name, utc_offset, redact_iocs, conn))
 
 
 def render_combined_pdf(analyses: list[dict], analyst_name: str = "",
-                         utc_offset: float | None = None, redact_iocs: bool = False) -> bytes:
+                         utc_offset: float | None = None, redact_iocs: bool = False,
+                         conn=None) -> bytes:
     """One document covering several analyses - a shared cover and contents,
     then each analysis in full. Used when a batch is submitted and the
     analyst wants a single artefact to hand over."""
@@ -403,7 +437,7 @@ def render_combined_pdf(analyses: list[dict], analyst_name: str = "",
         raise ValueError("No analyses to combine")
 
     sections = [
-        build_report_context(a, analyst_name, utc_offset, redact_iocs) for a in analyses
+        build_report_context(a, analyst_name, utc_offset, redact_iocs, conn) for a in analyses
     ]
     totals = {"high": 0, "medium": 0, "low": 0, "info": 0}
     for section in sections:
@@ -432,8 +466,8 @@ def render_combined_pdf(analyses: list[dict], analyst_name: str = "",
 
 
 def render_pdf(analysis: dict, analyst_name: str = "", utc_offset: float | None = None,
-                redact_iocs: bool = False) -> bytes:
-    context = build_report_context(analysis, analyst_name, utc_offset, redact_iocs)
+                redact_iocs: bool = False, conn=None) -> bytes:
+    context = build_report_context(analysis, analyst_name, utc_offset, redact_iocs, conn)
     analysis_id = analysis.get("id")
     title = f"Plaguards Report {analysis_id}" if analysis_id else "Plaguards Report"
     return _render_split("report.html", context, "PDF report", title=title)
@@ -467,7 +501,9 @@ def _render_split(template_name: str, context: dict, what: str,
     toc = context.get("toc") or []
     body_pages = [p.extract_text() or "" for p in pypdf.PdfReader(io.BytesIO(body)).pages]
     body_index = _locate_sections(body_pages, toc)
-    for entry, index in zip(toc, body_index):
+    # strict: _locate_sections returns one index per contents entry. A
+    # mismatch would silently shift every page number that follows it.
+    for entry, index in zip(toc, body_index, strict=True):
         # Body page 0 prints as "Page 1", so the contents quote index + 1.
         entry["page"] = "" if index is None else str(index + 1)
 
@@ -537,7 +573,7 @@ def _link_contents(writer, front_pages: int, body_index: list) -> None:
     if len(annots) != len(body_index):
         return
 
-    for annot, index in zip(annots, body_index):
+    for annot, index in zip(annots, body_index, strict=True):
         if index is None:
             continue
         target = front_pages + index

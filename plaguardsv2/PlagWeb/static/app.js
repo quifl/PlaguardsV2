@@ -197,6 +197,25 @@ document.addEventListener("DOMContentLoaded", () => {
     syncTarget();
   }
 
+  // Custom up/down buttons drawn over a number input, standing in for its
+  // hidden native spinner - stepUp/stepDown already respect min/max/step,
+  // so there's no arithmetic to duplicate here.
+  document.querySelectorAll(".number-field").forEach((field) => {
+    const input = field.querySelector("input[type=number]");
+    field.querySelectorAll(".number-step").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        try {
+          btn.dataset.step === "up" ? input.stepUp() : input.stepDown();
+        } catch {
+          // Value doesn't currently line up with `step`; leave it alone
+          // rather than throwing the click away with no feedback.
+        }
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+        input.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+    });
+  });
+
   // Expand / collapse every finding card at once.
   document.querySelectorAll("[data-expand-all]").forEach((btn) => {
     btn.addEventListener("click", () => {

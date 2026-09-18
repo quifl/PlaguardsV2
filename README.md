@@ -105,8 +105,11 @@ indicators, and a report you can hand to someone else.
 - Country, city, coordinates, continent, ASN, organisation, network.
 - Reverse DNS, and a category for every address (public, private,
   documentation, loopback).
-- Prefers a **local MaxMind GeoLite2 database** - fully offline, the address
-  never leaves the machine. Falls back to ipinfo.io if you give it a token.
+- Prefers **local MaxMind GeoLite2 databases** - fully offline, the address
+  never leaves the machine. Settings has a separate field for City, Country
+  and ASN - each takes a `.mmdb` file, a folder, or MaxMind's downloaded
+  `.tar.gz` archive (extracted automatically) - and whichever are filled in
+  are merged into one record. Falls back to ipinfo.io if you give it a token.
 
 **6. Analyst triage** - your call is the conclusion.
 
@@ -180,7 +183,7 @@ Configure any subset from the **Settings** page, or edit `.env` directly. Withou
 | Pulsedive | `PULSEDIVE_API_KEY` | https://pulsedive.com/api/ |
 | ipinfo.io *(geolocation)* | `IPINFO_TOKEN` | https://ipinfo.io/account/token |
 
-For geolocation, a **local MaxMind GeoLite2 database** is preferred over ipinfo - point Settings → General at the `.mmdb` file and lookups never leave your machine. Grab it free from [MaxMind](https://dev.maxmind.com/geoip/geolite2-free-geolocation-data).
+For geolocation, **local MaxMind GeoLite2 databases** are preferred over ipinfo - Settings → Geolocation Databases has one field each for City, Country and ASN, each taking a `.mmdb` file, a folder, or MaxMind's `.tar.gz` download, and lookups never leave your machine. That section also carries step-by-step instructions for getting them free from [MaxMind](https://dev.maxmind.com/geoip/geolite2-free-geolocation-data).
 
 > [!WARNING]
 > Keys are stored in the local SQLite database on the machine you run this on. Do not commit `.env`, and do not hardcode keys in source.
@@ -193,7 +196,7 @@ For geolocation, a **local MaxMind GeoLite2 database** is preferred over ipinfo 
 | **Result** | Deobfuscated script, transform log, resolved variables and the original input on the left; findings with context, MITRE mapping, threat intel and triage controls on the right. Export the findings as PDF, Excel or CSV. |
 | **History** | Past analyses newest first. Select rows to export a zip of PDFs, build a combined report, or delete in bulk. Retention is configurable. |
 | **Tutorial** | Every feature explained page by page, plus a guided tour that walks the whole app. |
-| **Settings** | API keys, the GeoLite2 database path, history retention, the analyst name printed on reports, the UTC offset used for timestamps, and a danger zone that clears stored history. |
+| **Settings** | API keys, the three GeoLite2 database paths (City, Country, ASN), history retention, the analyst name printed on reports, the UTC offset used for timestamps, and a danger zone that clears stored history. |
 
 ### CLI usage
 
@@ -248,6 +251,8 @@ plaguardsv2/
     PlagEval.py        recursive-descent evaluator over a restricted subset
     PlagTokens.py      tokenizer shared by the evaluator
     PlagTrace.py       sequential variable tracking through reassignment
+    PlagLoader.py      byte-array loaders: key-combined blob, then inflate
+    regex_utils.py     shared regex construction, written in one place
     PlagVbs.py         VBScript literal folding
     PlagJs.py          JScript literal folding
     PlagCmd.py         batch / cmd variable resolution
@@ -267,6 +272,7 @@ plaguardsv2/
     PlagEngine.py      the pipeline - shared by both front ends
     PlagReport.py      PDF rendering (front matter, findings, appendices)
     PlagCharts.py      matplotlib charts for the report
+    PlagWatermark.py   the faint page-background mark behind each page
     PlagMitre.py       technique ID -> human-readable name
     PlagExplain.py     plain-English notes for each transform
     PlagFilter.py      upload validation and filename sanitization
