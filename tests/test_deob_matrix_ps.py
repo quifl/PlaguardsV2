@@ -18,7 +18,22 @@ CASES = [
     ("char-join", f"$d = ({DOM_CHARS}) -join ''; Write-Host $d", DOM),
     ("byte-array", f"$d=[Text.Encoding]::ASCII.GetString([byte[]]({DOM_CODES})); Write-Host $d", DOM),
     ("split-join", "$d = ('malicious#example#invalid' -split '#') -join '.'; Write-Host $d", DOM),
-    ("replace", "$d = 'maliciousXexampleXinvalid' -replace 'X','.'; Write-Host $d", DOM),
+    # The separator must not occur in the payload in EITHER case. 'X' used to
+    # sit here and the expected value was 'malicious.example.invalid', which no
+    # real host produces: -replace is case-insensitive by default, so the
+    # lowercase 'x' in "example" matched too and the answer was
+    # 'malicious.e.ample.invalid'. The fixture had been written from the
+    # engine's own output back when -replace was a literal str.replace, so it
+    # asserted the bug. 'Q' appears in neither case.
+    ("replace", "$d = 'maliciousQexampleQinvalid' -replace 'Q','.'; Write-Host $d", DOM),
+    # Pins the semantics the old fixture silently assumed: -creplace IS
+    # case-sensitive, so the lowercase 'x' survives.
+    ("creplace-case-sensitive",
+     "$d = 'maliciousXexampleXinvalid' -creplace 'X','.'; Write-Host $d",
+     "malicious.example.invalid"),
+    # ...and the case-insensitive default does not.
+    ("replace-is-case-insensitive",
+     "$d = 'BOOK' -replace 'b','C'; Write-Host $d", "COOK"),
     ("format-operator", "$d = '{0}.{1}.{2}' -f 'malicious','example','invalid'; Write-Host $d", DOM),
     ("backticks", "W`r`i`te-H`o`st 'malicious.example.invalid'", DOM),
     ("subexpression", '$d = "$([char]109)alicious.example.invalid"; Write-Host $d', DOM),

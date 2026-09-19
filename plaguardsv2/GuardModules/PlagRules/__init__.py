@@ -15,6 +15,7 @@ from . import (
     persistence,
     scan_interface,
     secure_string_bridge,
+    service_control,
 )
 
 SIGNATURES = (
@@ -29,4 +30,5 @@ SIGNATURES = (
     + env_slicing.RULES
     + dynamic_resolution.RULES
     + secure_string_bridge.RULES
+    + service_control.RULES
 )

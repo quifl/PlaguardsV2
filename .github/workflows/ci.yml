@@ -1,0 +1,88 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest ruff
+
+      - name: Lint (errors and likely bugs only)
+        # F = pyflakes (undefined names, unused imports), E9 = syntax/IO errors,
+        # B = bugbear (mutable defaults, loop-variable capture, unguarded zip).
+        # Style rules are deliberately not enforced - they produce churn without
+        # catching defects.
+        run: ruff check plaguardsv2/ tests/ --select F,E9,B --output-format github
+
+      - name: Unit and integration tests
+        run: python -m pytest -q --timeout=300
+
+      - name: Accuracy gates (labelled corpus)
+        # Fails if deobfuscation quality drops even when unit tests pass.
+        run: python -m pytest tests/test_corpus_accuracy.py -q -v
+
+      - name: Scorecard
+        if: always()
+        run: python tools/bench_accuracy.py both
+
+  redos:
+    # Regex patterns now run against attacker-supplied text - the -replace
+    # operand comes from the analysed sample itself. Python's re has no match
+    # timeout, so the guard is structural and needs its own wall-clock check.
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pytest
+      - name: Catastrophic-backtracking smoke test
+        run: python -m pytest tests/ -q -k "redos or backtrack or pathological" --timeout=60
+
+  secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Nothing key-shaped is tracked
+        # The scratch notes file has held live provider keys before. It is
+        # gitignored and dockerignored; this fails the build if it ever lands
+        # in the index anyway.
+        run: |
+          if git ls-files --error-unmatch tests/test_and_notes.md 2>/dev/null; then
+            echo "::error::tests/test_and_notes.md is tracked - it holds live API keys"
+            exit 1
+          fi
+          if git ls-files | grep -qiE '\.env$|\.mmdb$|\.db$'; then
+            echo "::error::a secret-bearing or large binary file is tracked"
+            git ls-files | grep -iE '\.env$|\.mmdb$|\.db$'
+            exit 1
+          fi
+          echo "clean"

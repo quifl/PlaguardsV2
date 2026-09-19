@@ -9,9 +9,11 @@ from __future__ import annotations
 import ast
 import base64
 import gzip
+import math
 import operator
 import re
 import zlib
+from collections import Counter
 from dataclasses import dataclass, field
 
 from . import PlagCmd, PlagEncode, PlagFold, PlagJs, PlagLoader, PlagVbs
@@ -20,6 +22,24 @@ from .regex_utils import abbreviated_flag
 MAX_PASSES = 10
 MAX_INPUT_SIZE = 5_000_000
 MIN_B64_TOKEN_LEN = 16
+
+# How many Base64 layers to peel inside a single decoded literal. Bounded
+# because the input is untrusted: a payload can nest itself arbitrarily (or
+# self-referentially) purely to make the analyser spin.
+MAX_B64_NEST_DEPTH = 8
+
+# Residual-blob detection. The length floor keeps ordinary identifiers and
+# prose out; the entropy floors keep padded/repetitive runs out. Hex tops out
+# at 4.0 bits/char against 6.0 for a Base64 alphabet, hence the two floors.
+MIN_RESIDUAL_BLOB_LEN = 40
+RESIDUAL_ENTROPY_MIN = 4.0
+RESIDUAL_HEX_ENTROPY_MIN = 3.2
+
+# A hex run of exactly a digest's width is a hash, which the IOC extractor
+# already reports as itself - not an encoded stage that failed to resolve.
+_HASH_DIGEST_HEX_LENGTHS = frozenset({40, 56, 64, 96, 128})
+
+PREVIEW_WIDTH = 96
 
 _SQ = r"'(?:[^']|'')*'"
 _DQ = r'"(?:[^"`]|`.)*"'
@@ -91,6 +111,41 @@ _BXOR_RE = re.compile(
 _SHELLID_RE = re.compile(r"\$ShellId\b", re.IGNORECASE)
 _SHELLID_VALUE = "Microsoft.PowerShell"
 
+# Assumed defaults for a stock Windows install. These are NOT derived from the
+# sample - they are resolved because a script that spells a command by slicing
+# $env:ComSpec or $env:PUBLIC is unreadable without them. The pass label says
+# "assumed" so the report can keep them apart from derived values.
+_ENV_DEFAULTS = {
+    "comspec": r"C:\Windows\system32\cmd.exe",
+    "windir": r"C:\Windows",
+    "systemroot": r"C:\Windows",
+    "programdata": r"C:\ProgramData",
+    "allusersprofile": r"C:\ProgramData",
+    "public": r"C:\Users\Public",
+    # TEMP and TMP are deliberately absent. They are the one pair here whose
+    # value genuinely varies per account, so there is no deterministic default
+    # to substitute - which makes them UNKNOWN under this engine's own rule.
+    #
+    # The placeholder that used to stand in for the account segment
+    # (C:\Users\<user>\AppData\Local\Temp) was worse than leaving the variable
+    # alone: the angle brackets split the path, and IOC extraction read the
+    # fragments as indicators - reporting a fabricated mutex "Local\Temp" and a
+    # truncated path "C:\Users" that appeared nowhere in the sample. Inventing
+    # an indicator is the failure this engine ranks above any missed one.
+}
+
+# $PSHOME is an automatic variable rather than an environment one, but it is
+# fixed for Windows PowerShell 5.1 and gets sliced the same way $ShellId does.
+_PSHOME_VALUE = r"C:\Windows\System32\WindowsPowerShell\v1.0"
+
+# The lookahead keeps an assignment target (`$env:TEMP = ...`) intact -
+# rewriting it to a literal would produce `'C:\...' = ...`, which is not code.
+_ENV_VAR_RE = re.compile(
+    r"\$(?:env:(?P<plain>\w+)|\{env:(?P<braced>\w+)\})(?!\s*=(?!=))",
+    re.IGNORECASE,
+)
+_PSHOME_RE = re.compile(r"\$PSHOME\b(?!\s*=(?!=))", re.IGNORECASE)
+
 _STRING_INDEX_RE = re.compile(rf"({_STR})\s*\[\s*(-?\d+)\s*\]")
 
 _ASSIGN_COUNT_RE = re.compile(r"\$(\w+)\s*[+\-*/%]?=(?!=)")
@@ -117,6 +172,37 @@ _ALLOWED_UNARYOPS = {ast.UAdd: operator.pos, ast.USub: operator.neg}
 
 
 @dataclass
+class ResidualBlob:
+    """A long high-entropy run still present in the final output.
+
+    Offsets are into `DeobfuscationResult.deobfuscated`. This is reporting
+    only - the engine never runs anything to open one of these, so the honest
+    statement is "still encoded", never a guess at the contents.
+    """
+    offset: int
+    length: int
+    entropy: float
+    reason: str
+
+
+@dataclass
+class TransformRecord:
+    """Structured provenance for one applied transform.
+
+    Parallel to `pass_log`, which stays a plain list[str] because the report
+    and its templates read it today. `assumed` is the load-bearing field: a
+    value this engine supplied from a default is not the same evidence as one
+    folded out of the sample, and the analyst has to be able to tell.
+    """
+    name: str
+    detail: str = ""
+    before: str = ""
+    after: str = ""
+    assumed: bool = False
+    iteration: int = 0
+
+
+@dataclass
 class DeobfuscationResult:
     original: str
     deobfuscated: str
@@ -127,6 +213,12 @@ class DeobfuscationResult:
     pass_log: list[str] = field(default_factory=list)
     truncated: bool = False
     iterations: int = 0
+    # False when the pass loop ran out of budget while still making progress,
+    # i.e. the output is only partially peeled. `truncated` is about input
+    # SIZE and says nothing about this.
+    converged: bool = True
+    residual_blobs: list[ResidualBlob] = field(default_factory=list)
+    transforms: list[TransformRecord] = field(default_factory=list)
 
 
 def _language_passes(source: str) -> list:
@@ -172,6 +264,7 @@ def run(source: str) -> DeobfuscationResult:
     passes = [
         ("propagated single-assignment literal variables", _propagate_literal_variables),
         ("resolved $ShellId (assumed default Windows PowerShell value)", _resolve_shellid),
+        ("resolved well-known $env: value(s) (assumed default Windows values)", _resolve_env_variables),
         ("resolved literal string indexing", _resolve_string_indexing),
         ("decoded -EncodedCommand base64 (UTF-16LE)", _decode_encoded_command),
         ("decoded [Convert]::FromBase64String literal(s)", _decode_frombase64_literals),
@@ -193,10 +286,13 @@ def run(source: str) -> DeobfuscationResult:
     passes += _language_passes(source)
 
     iterations = 0
+    transforms: list[TransformRecord] = []
+    converged = True
     for i in range(MAX_PASSES):
         iterations = i + 1
         changed_this_round = False
         for label, fn in passes:
+            before = text
             new_text, changed, detail = fn(text)
             if changed:
                 text = new_text
@@ -205,14 +301,40 @@ def run(source: str) -> DeobfuscationResult:
                 if detail:
                     entry += f" ({detail})"
                 log.append(entry)
+                preview_before, preview_after = _change_previews(before, new_text)
+                transforms.append(TransformRecord(
+                    name=label,
+                    detail=detail,
+                    before=preview_before,
+                    after=preview_after,
+                    assumed="assumed" in label.lower(),
+                    iteration=i + 1,
+                ))
         if not changed_this_round:
             break
+    else:
+        # Fell out of range() while the last round was still rewriting things:
+        # the fixed point was never reached, so what follows is half-peeled.
+        # Saying so explicitly is the difference between "nothing left to do"
+        # and "we gave up", which the result otherwise presents identically.
+        converged = False
+        log.append(
+            f"Fixed point not reached after {MAX_PASSES} passes - output is only "
+            f"partially deobfuscated and may still contain encoded stages"
+        )
 
     text = _unmask_comments(text, comments)
     raw = _final_cleanup(text)
     text = _final_cleanup(prettify(text))
     if truncated:
         log.append("Input truncated to first %d characters before analysis" % MAX_INPUT_SIZE)
+
+    residual_blobs = _scan_residual_blobs(text)
+    if residual_blobs:
+        log.append(
+            f"{len(residual_blobs)} high-entropy blob(s) left unresolved by static "
+            f"analysis - still encoded, contents not recovered"
+        )
 
     return DeobfuscationResult(
         original=source,
@@ -221,6 +343,9 @@ def run(source: str) -> DeobfuscationResult:
         pass_log=log,
         truncated=truncated,
         iterations=iterations,
+        converged=converged,
+        residual_blobs=residual_blobs,
+        transforms=transforms,
     )
 
 
@@ -373,6 +498,138 @@ def _find_string_spans(text: str):
     return spans
 
 
+def _inside_any_span(m: re.Match, spans) -> bool:
+    """Is this match wholly contained in an existing string literal?
+
+    A match that merely *encloses* a literal (the quoted Base64 argument of a
+    decoder call, say) is not inside one and must still be rewritten.
+    """
+    return any(start <= m.start() and m.end() <= end for start, end in spans)
+
+
+def _preview(value: str) -> str:
+    """One short printable line standing in for a span of script.
+
+    Comment sentinels and control characters are folded away: a preview is
+    read by a human in a report, and an embedded newline or \\x00CMT token
+    would break the line it is rendered on.
+    """
+    flat = _COMMENT_TOKEN_RE.sub("<comment>", value)
+    flat = re.sub(r"\s+", " ", flat).strip()
+    flat = "".join(c if c.isprintable() else "." for c in flat)
+    if len(flat) <= PREVIEW_WIDTH:
+        return flat
+    return flat[:PREVIEW_WIDTH - 3] + "..."
+
+
+def _change_previews(before: str, after: str) -> tuple[str, str]:
+    """Preview the region a pass actually rewrote, not the head of the file.
+
+    A transform that fires 4000 characters in would otherwise record two
+    identical previews and prove nothing about what it did.
+    """
+    limit = min(len(before), len(after))
+    i = 0
+    while i < limit and before[i] == after[i]:
+        i += 1
+    start = max(0, i - PREVIEW_WIDTH // 4)
+    window = PREVIEW_WIDTH * 2
+    return _preview(before[start:start + window]), _preview(after[start:start + window])
+
+
+def _shannon_entropy(value: str) -> float:
+    if not value:
+        return 0.0
+    total = len(value)
+    return -sum(
+        (n / total) * math.log2(n / total) for n in Counter(value).values()
+    )
+
+
+# '=' is Base64 *padding*, so it belongs at the end of a run and nowhere else.
+# With '=' in the body the run absorbed any "name=" prefix it abutted, which
+# shifted the decode by those bytes and made a perfectly decodable blob look
+# like an encrypted stage - it fired on every "?param=<base64>" in a submitted
+# proxy log. The lookbehind stops a match starting mid-token.
+_RESIDUAL_RUN_RE = re.compile(
+    r"(?<![A-Za-z0-9+/=])[A-Za-z0-9+/]{%d,}={0,2}(?![A-Za-z0-9+/=])"
+    % MIN_RESIDUAL_BLOB_LEN
+)
+_HEX_RUN_RE = re.compile(r"[0-9A-Fa-f]+")
+
+
+def _residual_reason(run: str, is_hex: bool) -> str:
+    if is_hex:
+        return "hex-like run with no recoverable text; likely an encrypted or binary stage"
+    raw = _b64_bytes(run)
+    if raw is None:
+        return "high-entropy run left unresolved by every pass"
+    try:
+        _maybe_inflate(raw).decode("utf-8")
+    except UnicodeDecodeError:
+        return ("Base64-like run decoding to non-text bytes even after inflation; "
+                "an encrypted or otherwise opaque stage")
+    return "Base64-like run not reached by any decoder call this engine recognises"
+
+
+_RECOVERED_PROBE_LEN = 24
+
+
+def _already_recovered(run: str, text: str) -> bool:
+    """True when this run's plaintext is already sitting in the output.
+
+    Several passes deliberately keep the encoded source next to the decoded
+    result - _decode_standalone_payloads leaves the original line in place,
+    and literal propagation copies a literal rather than moving it. Scanning
+    the final text without accounting for that made the engine announce that a
+    payload was "still encoded, contents not recovered" on the very same run
+    where it had decoded it and the plaintext appeared two lines further down.
+    Saying so is worse than saying nothing: it is a confident claim about the
+    analysis that is simply untrue.
+    """
+    decoded = _b64_bytes(run)
+    if not decoded:
+        return False
+    try:
+        plain = decoded.decode("utf-8")
+    except UnicodeDecodeError:
+        try:
+            plain = _maybe_inflate(decoded).decode("utf-8")
+        except (UnicodeDecodeError, OSError, EOFError):
+            return False
+    probe = plain.strip()[:_RECOVERED_PROBE_LEN]
+    return len(probe) >= 8 and probe in text
+
+
+def _scan_residual_blobs(text: str) -> list[ResidualBlob]:
+    """Report the encoded runs that survived every pass.
+
+    When static analysis genuinely cannot continue - an encrypted stage, a key
+    that never appears in the sample - the analyst needs to be told that, not
+    left to spot a wall of Base64 by eye. Nothing here decodes speculatively
+    or executes anything; it only measures and names what is still opaque.
+    """
+    blobs: list[ResidualBlob] = []
+    for m in _RESIDUAL_RUN_RE.finditer(text):
+        run = m.group(0)
+        is_hex = _HEX_RUN_RE.fullmatch(run) is not None
+        if is_hex and len(run) in _HASH_DIGEST_HEX_LENGTHS:
+            continue
+        entropy = _shannon_entropy(run)
+        floor = RESIDUAL_HEX_ENTROPY_MIN if is_hex else RESIDUAL_ENTROPY_MIN
+        if entropy < floor:
+            continue
+        if _already_recovered(run, text):
+            continue
+        blobs.append(ResidualBlob(
+            offset=m.start(),
+            length=len(run),
+            entropy=round(entropy, 2),
+            reason=_residual_reason(run, is_hex),
+        ))
+    return blobs
+
+
 def _apply_outside_strings(text: str, transform):
     spans = _find_string_spans(text)
     if not spans:
@@ -395,6 +652,15 @@ def _apply_outside_strings(text: str, transform):
         changed = True
     parts.append(new_tail)
     return "".join(parts), changed
+
+
+def _b64_bytes(b64: str) -> bytes | None:
+    """Raw bytes for a Base64 token, padding it first. Obfuscators routinely
+    strip the '=' padding, so a missing one is not a reason to give up."""
+    try:
+        return base64.b64decode(b64 + "=" * (-len(b64) % 4), validate=False)
+    except Exception:
+        return None
 
 
 def _b64_decode_text(b64: str) -> str | None:
@@ -633,48 +899,199 @@ def _maybe_inflate(raw: bytes) -> bytes:
         return raw
 
 
+def _decode_b64_wrapped(m: re.Match) -> str | None:
+    """Decoded text for a Text.Encoding::GetString(FromBase64String(...)) match."""
+    codec = _ENCODING_CODECS.get(m.group("enc").lower(), "utf-8")
+    raw = _b64_bytes(m.group("b64"))
+    if raw is None:
+        return None
+    try:
+        return raw.decode(codec, errors="replace")
+    except Exception:
+        return None
+
+
+def _decode_b64_plain(m: re.Match) -> str | None:
+    """Decoded text for a bare FromBase64String(...) match, or None when the
+    bytes are not text.
+
+    A non-UTF-8 result may still be a compressed stage (a common way to shrink
+    or obscure a payload before encoding it), so inflation is tried first.
+    Beyond that the call is left alone deliberately: an encrypted or XOR-ed
+    stage rendered as latin-1 mojibake destroys the exact bytes a later pass
+    needs to recover it.
+    """
+    raw = _b64_bytes(m.group("b64"))
+    if raw is None:
+        return None
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        pass
+    try:
+        return _maybe_inflate(raw).decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+
+
+def _rewrite_frombase64(text: str, render) -> tuple[str, int]:
+    """Run both FromBase64String substitutions over `text`, handing each
+    successfully decoded string to `render` to produce its replacement.
+
+    Two things here are load-bearing. Matches sitting inside an existing string
+    literal are skipped - the same guard `_fold_string_concatenation` applies -
+    so a decoder call that is merely quoted script text is never rewritten. And
+    the spans are recomputed between the two substitutions, because the first
+    one moves every offset after it.
+    """
+    count = 0
+
+    def substitute(decoder):
+        def repl(m: re.Match) -> str:
+            nonlocal count
+            if _inside_any_span(m, spans):
+                return m.group(0)
+            decoded = decoder(m)
+            if decoded is None:
+                return m.group(0)
+            count += 1
+            return render(decoded)
+        return repl
+
+    spans = _find_string_spans(text)
+    text = _FROMBASE64_WRAPPED_RE.sub(substitute(_decode_b64_wrapped), text)
+    spans = _find_string_spans(text)
+    text = _FROMBASE64_PLAIN_RE.sub(substitute(_decode_b64_plain), text)
+    return text, count
+
+
+def _peel_frombase64_layers(text: str, depth: int = 0) -> str:
+    """Resolve further FromBase64String layers inside already-decoded text,
+    returning plain text rather than a quoted literal.
+
+    Nesting has to be resolved here, before the caller quotes the result once,
+    or a multi-layer payload is silently destroyed: quoting each layer as it is
+    peeled splices unescaped quote characters into the middle of the literal
+    built by the layer above it, which fragments that literal and leaves the
+    assignment folder keeping only the first fragment.
+    """
+    if depth >= MAX_B64_NEST_DEPTH:
+        return text
+    # Fold at EVERY level, not just the outermost. An inner stage is spliced
+    # into the expression slot its decoder call occupied, so a multi-statement
+    # stage lands glued to whatever preceded it ("$s = $d = ..."). Folding the
+    # stage to its values before it is spliced means the indicator is already
+    # resolved by the time that happens, instead of sitting in a malformed
+    # statement no later pass can parse.
+    peeled, count = _rewrite_frombase64(
+        text,
+        lambda decoded: _fold_decoded_fragment(
+            _peel_frombase64_layers(decoded, depth + 1)
+        ),
+    )
+    return peeled if count else text
+
+
+# Passes safe to re-apply to a decoded fragment. Deliberately excludes the
+# decoders themselves (_peel_frombase64_layers already owns nesting, with its
+# own depth bound) and the annotating passes, whose output is commentary meant
+# for the top-level document rather than for a value about to be re-quoted.
+_FRAGMENT_PASS_NAMES = (
+    "_resolve_string_indexing",
+    "_fold_string_concatenation",
+    "_fold_join_operator",
+    "_fold_format_operator",
+    "_resolve_char_codes",
+    "_resolve_bxor",
+    "_strip_junk_backticks",
+    "_strip_redundant_casts",
+    "_propagate_literal_variables",
+)
+MAX_FRAGMENT_ROUNDS = 6
+_fragment_passes_cache: list | None = None
+
+
+def _fragment_passes() -> list:
+    """Resolved on first use, not at import - several of these are defined
+    further down the module than this helper."""
+    global _fragment_passes_cache
+    if _fragment_passes_cache is None:
+        g = globals()
+        _fragment_passes_cache = [g[name] for name in _FRAGMENT_PASS_NAMES]
+        _fragment_passes_cache += [
+            PlagFold.fold_subexpressions,
+            PlagFold.fold_expressions,
+            PlagFold.fold_assignments,
+        ]
+    return _fragment_passes_cache
+
+
+def _fold_decoded_fragment(text: str) -> str:
+    """Fold a decoded stage as SCRIPT before it is re-quoted as a value.
+
+    A decoded Base64 stage is almost always script, not data - the whole point
+    of staging is that the next layer is code. Quoting it verbatim freezes it
+    as a literal, so any value construction inside it (concatenation, -f,
+    character codes) is never folded and the indicator it assembles stays
+    hidden. Measured: every value style resolved at depth 0 but only the ones
+    whose payload appeared verbatim survived a single staging layer.
+
+    Running the value passes over the fragment first means the literal that
+    finally gets quoted already contains the resolved indicator. Nothing is
+    executed here - these are the same literal-folding passes the top level
+    runs, just applied one layer down.
+    """
+    for _ in range(MAX_FRAGMENT_ROUNDS):
+        changed_any = False
+        for fn in _fragment_passes():
+            try:
+                new_text, changed, _detail = fn(text)
+            except Exception:
+                # A fragment is arbitrary decoded bytes and may not be
+                # well-formed script at all. A pass that cannot cope with it is
+                # not a reason to lose the fragment.
+                continue
+            if changed:
+                text = new_text
+                changed_any = True
+        if not changed_any:
+            break
+    return text
+
+
 def _decode_frombase64_literals(text: str):
+    new_text, count = _rewrite_frombase64(
+        text,
+        lambda decoded: _make_ps_literal(
+            _fold_decoded_fragment(_peel_frombase64_layers(decoded))
+        ),
+    )
+    return new_text, count > 0, (f"{count} literal(s)" if count else "")
+
+
+def _resolve_env_variables(text: str):
     count = [0]
 
-    def repl_wrapped(m: re.Match) -> str:
-        codec = _ENCODING_CODECS.get(m.group("enc").lower(), "utf-8")
-        b64 = m.group("b64")
-        try:
-            padded = b64 + "=" * (-len(b64) % 4)
-            raw = base64.b64decode(padded, validate=False)
-            decoded = raw.decode(codec, errors="replace")
-        except Exception:
-            return m.group(0)
-        count[0] += 1
-        return _make_ps_literal(decoded)
-
-    def repl_plain(m: re.Match) -> str:
-        b64 = m.group("b64")
-        try:
-            padded = b64 + "=" * (-len(b64) % 4)
-            raw = base64.b64decode(padded, validate=False)
-        except Exception:
-            return m.group(0)
-        try:
-            decoded = raw.decode("utf-8")
-        except UnicodeDecodeError:
-            # Doesn't look like plain UTF-8 text - it may be a compressed
-            # stage (a common way to shrink/obscure a payload before
-            # base64-encoding it). Try inflating it before giving up.
-            inflated = _maybe_inflate(raw)
-            try:
-                decoded = inflated.decode("utf-8")
-            except UnicodeDecodeError:
-                # Still binary: an encrypted or XOR-ed stage, not text. Leave
-                # the call alone - rendering it as latin-1 mojibake destroys
-                # the bytes that a later pass needs to recover the payload.
+    def transform(chunk: str) -> str:
+        def repl(m: re.Match) -> str:
+            name = (m.group("plain") or m.group("braced") or "").lower()
+            value = _ENV_DEFAULTS.get(name)
+            if value is None:
+                # Every other environment variable depends on the victim host,
+                # so anything we substituted would be invention, not analysis.
                 return m.group(0)
-        count[0] += 1
-        return _make_ps_literal(decoded)
+            count[0] += 1
+            return _make_ps_literal(value)
 
-    text = _FROMBASE64_WRAPPED_RE.sub(repl_wrapped, text)
-    text = _FROMBASE64_PLAIN_RE.sub(repl_plain, text)
-    return text, count[0] > 0, (f"{count[0]} literal(s)" if count[0] else "")
+        def repl_pshome(m: re.Match) -> str:
+            count[0] += 1
+            return _make_ps_literal(_PSHOME_VALUE)
+
+        chunk = _ENV_VAR_RE.sub(repl, chunk)
+        return _PSHOME_RE.sub(repl_pshome, chunk)
+
+    new_text, changed = _apply_outside_strings(text, transform)
+    return new_text, changed, (f"{count[0]} variable(s)" if count[0] else "")
 
 
 def _fold_string_concatenation(text: str):
@@ -829,6 +1246,9 @@ def _strip_junk_backticks(text: str):
 MAX_ANNOTATED_LINES = 400
 
 
+_DECODED_MARKER = "# [decoded from "
+
+
 def _decode_standalone_payloads(text: str):
     """Decode a line that is *entirely* an encoded payload.
 
@@ -843,18 +1263,26 @@ def _decode_standalone_payloads(text: str):
 
     out: list[str] = []
     hits = 0
-    for line in lines:
+    for index, line in enumerate(lines):
         out.append(line)
         stripped = line.strip()
         # Short lines are ordinary prose far more often than a payload.
         if len(stripped) < PlagEncode.MIN_B64_LEN or stripped.startswith("#"):
+            continue
+        # Idempotency guard, matching the one the annotating passes use. This
+        # pass re-decodes the same blob on every round otherwise, so the loop
+        # never reaches a fixed point: the run burns all MAX_PASSES rounds,
+        # stacks a duplicate comment each time, and then reports converged
+        # False for input it had in fact fully solved on round one.
+        following = lines[index + 1].lstrip() if index + 1 < len(lines) else ""
+        if following.startswith(_DECODED_MARKER):
             continue
         payload = PlagEncode.decode_payload(stripped)
         if payload is None:
             continue
         how, decoded = payload
         hits += 1
-        out.append(f"# [decoded from {how}] {decoded}")
+        out.append(f"{_DECODED_MARKER}{how}] {decoded}")
 
     if not hits:
         return text, False, ""

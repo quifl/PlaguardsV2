@@ -532,8 +532,8 @@
 {% endif %}
 
 <h2 class="pb">Deobfuscation</h2>
-{% if s.analysis.pass_log %}
-<h3>Transforms applied ({{ s.analysis.pass_log|length }})</h3>
+{% if s.pass_log_display %}
+<h3>Transforms applied ({{ s.pass_log_display|length }})</h3>
 <table class="grid">
   <tr><th style="width:44%;">Transform</th><th>What this technique is</th></tr>
   {% for row in s.pass_log_display %}

@@ -536,8 +536,8 @@
 {% endif %}
 
 <h2 class="pb">Deobfuscation</h2>
-{% if analysis.pass_log %}
-<h3>Transforms applied ({{ analysis.pass_log|length }})</h3>
+{% if pass_log_display %}
+<h3>Transforms applied ({{ pass_log_display|length }})</h3>
 <table class="grid">
   <tr><th style="width:44%;">Transform</th><th>What this technique is</th></tr>
   {% for row in pass_log_display %}
@@ -552,6 +552,18 @@
 obfuscation techniques that were detected but could not be fully resolved automatically.</p>
 {% else %}
 <p>No deobfuscation transforms were needed &mdash; the input appears to already be plaintext.</p>
+{% endif %}
+
+{# Statements about the analysis itself rather than decodes that happened -
+   that the fixed point was not reached, or that opaque runs remain. Kept out
+   of the transform count so a caveat is never read as a transform. #}
+{% if analysis_notes %}
+<h3>Analysis notes</h3>
+<table class="grid">
+  {% for note in analysis_notes %}
+  <tr><td>{{ note }}</td></tr>
+  {% endfor %}
+</table>
 {% endif %}
 
 {% if resolved_display %}

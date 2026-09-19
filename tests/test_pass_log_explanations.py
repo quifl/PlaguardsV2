@@ -19,9 +19,13 @@ def test_every_pass_type_used_in_this_session_has_an_explanation():
 
 
 def test_an_unrecognised_entry_falls_back_to_a_real_em_dash_not_the_html_entity():
+    # Must use the real transform shape ("Pass N: ..."). The report now splits
+    # pass_log on that prefix - anything else is a statement about the analysis
+    # rather than a transform, and is rendered under Analysis notes instead.
     stored = {
         "original": "", "deobfuscated": "", "source_kind": "pasted",
-        "findings": [], "pass_log": ["Some future transform with no explanation yet"],
+        "findings": [],
+        "pass_log": ["Pass 1: some future transform with no explanation yet"],
     }
     ctx = PlagReport.build_report_context(stored)
     assert ctx["pass_log_display"][0]["why"] == ""

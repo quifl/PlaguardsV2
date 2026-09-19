@@ -284,6 +284,22 @@ def _numbered_lines(text: str) -> list[dict]:
     return rows
 
 
+# A transform entry is written as "Pass N: ...". Everything else the engine
+# appends to pass_log is a statement about the analysis itself - that the
+# fixed point was not reached, or that high-entropy runs are still opaque.
+# Counting those under "Transforms applied (N)" overstates the count and,
+# worse, presents a caveat as though it were a decode that happened.
+_TRANSFORM_PREFIX = "Pass "
+
+
+def _transform_entries(pass_log: list) -> list:
+    return [e for e in pass_log if str(e).startswith(_TRANSFORM_PREFIX)]
+
+
+def _status_entries(pass_log: list) -> list:
+    return [e for e in pass_log if not str(e).startswith(_TRANSFORM_PREFIX)]
+
+
 def _source_line(analysis: dict) -> str:
     filename = analysis.get("filename") or "pasted-script"
     kind = analysis.get("source_kind")
@@ -354,8 +370,9 @@ def build_report_context(analysis: dict, analyst_name: str = "", utc_offset: flo
         "resolved_display": resolved_display,
         "pass_log_display": [
             {"entry": entry, "why": PlagExplain.explain(entry)}
-            for entry in analysis.get("pass_log", [])
+            for entry in _transform_entries(analysis.get("pass_log", []))
         ],
+        "analysis_notes": _status_entries(analysis.get("pass_log", [])),
         "severity_chart": PlagCharts.severity_bar_chart(severity_counts) if findings else None,
         "triage_chart": PlagCharts.triage_pie_chart(triage_counts) if findings else None,
         "logo_data_uri": _logo_data_uri(),
