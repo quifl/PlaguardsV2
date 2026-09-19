@@ -29,14 +29,14 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install pytest ruff
+          pip install pytest pytest-timeout ruff
 
       - name: Lint (errors and likely bugs only)
         # F = pyflakes (undefined names, unused imports), E9 = syntax/IO errors,
         # B = bugbear (mutable defaults, loop-variable capture, unguarded zip).
         # Style rules are deliberately not enforced - they produce churn without
         # catching defects.
-        run: ruff check plaguardsv2/ tests/ --select F,E9,B --output-format github
+        run: ruff check plaguardsv2/ tests/ tools/ --select F,E9,B --output-format github
 
       - name: Unit and integration tests
         run: python -m pytest -q --timeout=300
@@ -63,7 +63,7 @@ jobs:
           cache: pip
       - run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt pytest
+          pip install -r requirements.txt pytest pytest-timeout
       - name: Catastrophic-backtracking smoke test
         run: python -m pytest tests/ -q -k "redos or backtrack or pathological" --timeout=60
 

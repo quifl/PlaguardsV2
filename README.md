@@ -22,8 +22,9 @@ indicators, and a report you can hand to someone else.
 
 - **Reads the script for you.** Obfuscated PowerShell, VBScript, JScript,
   batch and cmd get unpicked into plain text.
-- **Finds the indicators.** IPs, domains, URLs, hashes, registry keys,
-  mutexes and User-Agents, including ones assembled at runtime.
+- **Finds the indicators.** IPv4 and IPv6, domains, URLs, hashes, registry
+  keys, mutexes, User-Agents, crypto wallets, Windows and UNC paths, and the
+  names of scheduled tasks and services — including ones assembled at runtime.
 - **Checks them automatically.** Every indicator is looked up against your
   threat-intel providers as part of the analysis, not as a separate step.
 - **Tells you where they are.** Addresses get country, city, ASN and

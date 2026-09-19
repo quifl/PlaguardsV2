@@ -41,6 +41,14 @@ TYPE_LABEL = {
     "registry_key": "Registry key",
     "mutex": "Mutex",
     "signature": "Signature",
+    # Without an entry here a type falls back to type.replace("_"," ").title(),
+    # which prints "Ipv6 Port" and "Unc Path" in an analyst-facing report.
+    "ipv6_port": "IPv6:port",
+    "crypto_wallet": "Crypto wallet",
+    "file_path": "File path",
+    "unc_path": "UNC path",
+    "scheduled_task": "Scheduled task",
+    "service_name": "Service name",
 }
 
 _env = Environment(

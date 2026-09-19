@@ -97,3 +97,32 @@ def test_report_html_includes_the_geolocation_section(monkeypatch):
     html = PlagReport.render_html(stored)
     assert "Geolocation" in html
     assert "Jakarta" in html
+
+
+# The extractor and the report are owned by different modules, so a new
+# indicator type can be added in PlagGrep and reach an analyst-facing report
+# with no label at all. It does not crash - _as_dict falls back to
+# type.replace("_", " ").title() - which is exactly why it goes unnoticed:
+# the report just prints "Ipv6 Port" and "Unc Path" at the reader.
+_MIXED_SAMPLE = "\n".join([
+    'Write-Host "2001:db8::1 and [2001:db8::2]:443"',
+    'Write-Host "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4"',
+    r'Write-Host "C:\Users\Public\stage.ps1"',
+    'Write-Host "' + chr(92) * 2 + r'host.example.invalid\share\x.dll"',
+    "schtasks /create /tn UpdaterTask /tr calc.exe",
+    r"New-Service -Name EvilSvc -BinaryPathName C:\x.exe",
+    'Write-Host "malicious.example.invalid"',
+    'Write-Host "198.51.100.24"',
+])
+
+
+def test_every_extractable_type_has_a_report_label():
+    from plaguardsv2.GuardModules import PlagGrep
+
+    produced = {f.type for f in PlagGrep.scan("", _MIXED_SAMPLE, "")}
+    assert produced, "sample produced no findings - it has stopped exercising anything"
+    unlabelled = sorted(t for t in produced if t not in PlagReport.TYPE_LABEL)
+    assert not unlabelled, (
+        "these types reach the report with an auto-generated label: "
+        f"{unlabelled} - add them to PlagReport.TYPE_LABEL"
+    )

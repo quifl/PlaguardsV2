@@ -26,6 +26,19 @@ def create_app(db_path: str | None = None) -> Flask:
         moment = datetime.fromtimestamp(ts, tz=timezone.utc) + timedelta(hours=offset)
         return moment.strftime("%Y-%m-%d %H:%M")
 
+    @app.template_filter("type_label")
+    def type_label(finding_type: str) -> str:
+        """Human-readable name for an indicator type.
+
+        Shares PlagReport's table so the dashboard and the PDF do not disagree
+        about what a finding is called - the browser used to print the raw
+        slug ("crypto_wallet", "unc_path") while the report said "Crypto
+        wallet" and "UNC path" for the same finding.
+        """
+        return PlagReport.TYPE_LABEL.get(
+            finding_type, str(finding_type).replace("_", " ").title()
+        )
+
     def get_db():
         if "db" not in g:
             g.db = PlagStore.get_conn(app.config["DB_PATH"])

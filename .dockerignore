@@ -20,3 +20,5 @@ plaguardsv2/GeoLite2/
 # runtime, so excluding it would break that button inside a container.
 tests/
 install.ps1
+tools/
+.github/
