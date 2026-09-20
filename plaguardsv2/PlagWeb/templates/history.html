@@ -2,7 +2,7 @@
 {% block title %}History - PlaguardsV2{% endblock %}
 {% block content %}
 <div class="section-title"><h2>History</h2></div>
-<p class="lede">Showing up to the {{ history_limit }} most recent analyses (set in Settings &rarr; General). Older ones are pruned automatically.</p>
+<p class="lede">Showing up to the {{ history_limit }} most recent analyses (set in Settings &rarr; General). Older ones are pruned automatically. A batch upload counts as one entry here, however many files it contained.</p>
 
 {% if not analyses %}
   <p class="muted">No analyses yet. <a href="{{ url_for('index') }}">Run your first one</a>.</p>
@@ -20,18 +20,75 @@
   </div>
 
   <table class="history-table">
-    <tr><th class="checkbox-cell"></th><th>ID</th><th>File</th><th>When</th><th>Findings</th><th>High severity</th><th></th></tr>
+    <tr>
+      <th class="checkbox-cell"></th><th>ID</th><th>File</th><th>Completed</th>
+      <th>Duration</th><th>Status</th><th>Findings</th><th>High severity</th><th></th>
+    </tr>
     {% for a in analyses %}
+    {% if a.kind == "batch" %}
+    <tr class="batch-row" id="batch-{{ a.id }}">
+      <td class="checkbox-cell">
+        <label class="check" title="Select every file in this batch">
+          <input type="checkbox" class="batch-select-all" data-batch-target="{{ a.id }}" />
+          <span class="check-box"></span>
+        </label>
+      </td>
+      <td>#{{ a.id }}</td>
+      <td>
+        <details class="batch-details" {{ "open" if a.id in open_batches }}>
+          <summary>
+            <i class="bi bi-collection"></i> <strong>{{ a.batch_filename }}</strong>
+            <span class="muted">
+              {{ a.total_files }} file{{ "s" if a.total_files != 1 else "" }}
+              &middot; {{ a.successful_files }} successful{% if a.failed_files %} &middot; {{ a.failed_files }} failed{% endif %}
+            </span>
+          </summary>
+          <ul class="batch-file-list">
+            {% for f in a.files %}
+            <li>
+              <label class="check">
+                <input type="checkbox" name="analysis_id" value="{{ f.id }}"
+                       class="row-check batch-child-check" data-batch-of="{{ a.id }}"
+                       {{ "checked" if f.id in selected }} />
+                <span class="check-box"></span>
+              </label>
+              <span class="bf-name">{{ f.filename }}</span>
+              <span class="badge status-{{ f.status }}">{{ f.status|capitalize }}</span>
+              <span class="bf-meta">{{ f.duration_ms|duration_to_str }}</span>
+              <span class="bf-meta">{{ f.completed_at|timestamp_to_str("%d %b %Y, %H:%M:%S") }}</span>
+              <a class="link-chip" href="{{ url_for('view_analysis', analysis_id=f.id) }}"
+                 target="_blank" rel="noopener"><i class="bi bi-box-arrow-up-right"></i> View</a>
+            </li>
+            {% endfor %}
+          </ul>
+        </details>
+      </td>
+      <td>{{ a.completed_at|timestamp_to_str("%d %b %Y, %H:%M:%S") }}</td>
+      <td>{{ a.duration_ms|duration_to_str }}</td>
+      <td><span class="badge status-{{ a.status }}">{{ a.status|capitalize }}</span></td>
+      <td>{{ a.finding_count }}</td>
+      <td>{{ a.high_count or 0 }}</td>
+      <td>
+        {% if a.files %}
+        <a class="link-chip" href="{{ url_for('batch_report_view', ids=a.files|map(attribute='id')|join(',')) }}"
+           target="_blank" rel="noopener" data-busy-link="Building your report…"><i class="bi bi-file-earmark-pdf"></i> Combined</a>
+        {% endif %}
+      </td>
+    </tr>
+    {% else %}
     <tr>
       <td class="checkbox-cell"><label class="check"><input type="checkbox" name="analysis_id" value="{{ a.id }}" class="row-check" {{ 'checked' if a.id in selected }} /><span class="check-box"></span></label></td>
       <td>#{{ a.id }}</td>
       <td>{{ a.filename }}</td>
-      <td>{{ a.created_at|int|timestamp_to_str }}</td>
+      <td>{{ a.completed_at|timestamp_to_str("%d %b %Y, %H:%M:%S") }}</td>
+      <td>{{ a.duration_ms|duration_to_str }}</td>
+      <td><span class="badge status-{{ a.status }}">{{ a.status|capitalize }}</span></td>
       <td>{{ a.finding_count }}</td>
       <td>{{ a.high_count or 0 }}</td>
       <td><a class="link-chip" href="{{ url_for('view_analysis', analysis_id=a.id) }}"
              target="_blank" rel="noopener"><i class="bi bi-box-arrow-up-right"></i> View</a></td>
     </tr>
+    {% endif %}
     {% endfor %}
   </table>
 </form>
@@ -53,6 +110,12 @@ document.addEventListener("DOMContentLoaded", () => {
     const combinedBtn = document.getElementById("combinedBtn");
     if (combinedBtn) combinedBtn.disabled = checked === 0;
     deleteBtn.disabled = checked === 0;
+    // A batch's own checkbox reflects whether ALL of its files are picked,
+    // same idea as "Select all" reflecting the whole table.
+    document.querySelectorAll(".batch-select-all").forEach((box) => {
+      const kids = document.querySelectorAll(`.batch-child-check[data-batch-of="${box.dataset.batchTarget}"]`);
+      box.checked = kids.length > 0 && Array.from(kids).every((k) => k.checked);
+    });
   };
 
   if (selectAll) {
@@ -62,6 +125,16 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
   rowChecks.forEach((c) => c.addEventListener("change", updateState));
+
+  // One click selects (or clears) every file inside that batch.
+  document.querySelectorAll(".batch-select-all").forEach((box) => {
+    box.addEventListener("change", () => {
+      document.querySelectorAll(`.batch-child-check[data-batch-of="${box.dataset.batchTarget}"]`)
+        .forEach((k) => { k.checked = box.checked; });
+      updateState();
+    });
+  });
+
   updateState();
 });
 </script>

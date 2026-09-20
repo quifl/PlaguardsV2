@@ -217,14 +217,20 @@
 <div class="tutorial-card">
   <h3>6. History page</h3>
   <ol>
-    <li>Past analyses, newest first, with the file name, when it ran, the finding count and
-      how many were high severity.</li>
+    <li>Past analyses, newest first, with the file name, when it completed, how long the
+      analysis took, its status, the finding count and how many were high severity.</li>
+    <li>A batch upload (several files, or a zip) is <strong>one entry</strong>, not one per
+      file &mdash; expand it to see each file's own status and duration, and <strong>View</strong>
+      any of them individually. Its own checkbox selects every file inside it at once.</li>
     <li><strong>View</strong> reopens an analysis, triage verdicts and all.</li>
     <li>Tick rows (or <strong>Select all</strong>) to <strong>Export as zip</strong>,
       build a <strong>Combined report</strong>, or <strong>Delete Selected</strong>.</li>
     <li>Only the most recent are kept &mdash; set how many under Settings &rarr; General.
-      Older ones are pruned automatically after each run.</li>
+      Older ones are pruned automatically after each run; a batch still only costs one slot,
+      however many files it contained.</li>
   </ol>
+  <p class="why">Start/completion times and duration are shown here and on the Result page
+  only &mdash; never in the PDF report, which stays exactly as it always has.</p>
   <div class="pocolo-actions">
     <a class="link-chip" href="#" data-start-tour="history"><i class="bi bi-play-circle"></i> Show me this</a>
   </div>

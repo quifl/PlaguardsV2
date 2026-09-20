@@ -4,7 +4,20 @@
 <div class="result-header">
   <div>
     <div class="section-title"><h2>Analysis #{{ analysis.id }}</h2></div>
-    <p class="lede">{{ analysis.filename }}{% if analysis.truncated %} <span class="badge badge-medium">input truncated</span>{% endif %}</p>
+    <p class="lede">{{ analysis.filename }}{% if analysis.truncated %} <span class="badge badge-medium">input truncated</span>{% endif %}
+      {% if analysis.batch %}
+      <a class="badge badge-unknown" href="{{ url_for('history') }}#batch-{{ analysis.batch.id }}"
+         title="Part of a {{ analysis.batch.total_files }}-file batch upload"><i class="bi bi-collection"></i> {{ analysis.batch.batch_filename }}</a>
+      {% endif %}
+    </p>
+    {% if analysis.started_at %}
+    <p class="muted result-timing">
+      <i class="bi bi-stopwatch"></i>
+      Started {{ analysis.started_at|timestamp_to_str('%d %b %Y, %H:%M:%S') }}
+      &middot; Completed {{ analysis.completed_at|timestamp_to_str('%d %b %Y, %H:%M:%S') }}
+      &middot; Duration {{ analysis.duration_ms|duration_to_str }}
+    </p>
+    {% endif %}
   </div>
   <div class="result-actions">
     <label class="check" title="Print indicator values black-on-black so they aren't readable at a glance">

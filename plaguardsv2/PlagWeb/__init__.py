@@ -8,7 +8,7 @@ from pathlib import Path
 
 from flask import Flask, Response, flash, g, jsonify, redirect, render_template, request, url_for
 
-from ..GuardModules import PlagBatch, PlagConfig, PlagEngine, PlagGrep, PlagIntel, PlagReport
+from ..GuardModules import PlagBatch, PlagConfig, PlagEngine, PlagFilter, PlagGrep, PlagIntel, PlagReport
 from ..GuardModules import PlagGeo, PlagLinks, PlagStore, PlagTable
 
 VALID_STATUSES = {"confirmed_threat", "false_positive", "unreviewed", "unknown"}
@@ -20,11 +20,34 @@ def create_app(db_path: str | None = None) -> Flask:
     app.config["DB_PATH"] = db_path
 
     @app.template_filter("timestamp_to_str")
-    def timestamp_to_str(ts: int) -> str:
+    def timestamp_to_str(ts, fmt: str = "%Y-%m-%d %H:%M"):
+        """Epoch seconds -> the configured display timezone.
+
+        `fmt` defaults to the app's original minute-precision format, used
+        throughout History; the analysis/batch timing display needs seconds
+        to tell "started" and "completed" apart when they land in the same
+        minute, so it passes a finer one instead of a second filter
+        duplicating this same offset lookup.
+        """
+        if ts is None:
+            return "—"
         from datetime import timedelta, timezone
         offset = PlagConfig.get_utc_offset(get_db())
         moment = datetime.fromtimestamp(ts, tz=timezone.utc) + timedelta(hours=offset)
-        return moment.strftime("%Y-%m-%d %H:%M")
+        return moment.strftime(fmt)
+
+    @app.template_filter("duration_to_str")
+    def duration_to_str(ms) -> str:
+        """Milliseconds -> "3.33s" / "1m 25.03s", the compact form used
+        everywhere timing is shown (Analysis Result, History, and the batch
+        summary alike)."""
+        if ms is None:
+            return "—"
+        seconds = ms / 1000
+        if seconds < 60:
+            return f"{seconds:.2f}s"
+        minutes, remainder = divmod(seconds, 60)
+        return f"{int(minutes)}m {remainder:.2f}s"
 
     @app.template_filter("type_label")
     def type_label(finding_type: str) -> str:
@@ -86,19 +109,27 @@ def create_app(db_path: str | None = None) -> Flask:
                 flash("Nothing analysable in that upload." + detail, "error")
                 return redirect(url_for("index"))
 
-            created = [
-                PlagEngine.run_analysis(
-                    text, filename=name, skip_intel=skip_intel, conn=conn,
-                    source_kind="file",
-                )["id"]
-                for name, text in batch
-            ]
+            # A single uploaded .zip gets its own name as the batch's label;
+            # anything else - several loose files, possibly mixed with zips -
+            # has no one natural name, so it's described by count instead.
+            if len(uploads) == 1 and PlagBatch.is_zip(uploads[0].filename):
+                batch_label = PlagFilter.sanitize_filename(uploads[0].filename)
+            else:
+                batch_label = f"{len(batch)} file" + ("" if len(batch) == 1 else "s")
+
+            outcome = PlagEngine.run_batch_analysis(
+                batch, batch_label, conn, skip_intel=skip_intel,
+            )
+            created = outcome["created_ids"]
 
             if skipped:
                 flash(f"Skipped {len(skipped)}: {', '.join(skipped[:6])}"
                       + (" …" if len(skipped) > 6 else ""), "error")
 
-            if len(created) == 1:
+            # Only a genuinely lone file (never made into a batch) goes
+            # straight to its own result page - the same as before this
+            # feature existed.
+            if outcome["batch_id"] is None and len(created) == 1:
                 return redirect(url_for("view_analysis", analysis_id=created[0]))
 
             limit = PlagConfig.get_history_limit(conn)
@@ -106,7 +137,8 @@ def create_app(db_path: str | None = None) -> Flask:
             if len(created) > limit:
                 note = (f" Only the {limit} most recent are kept - raise the history "
                         f"limit in Settings if you need more.")
-            flash(f"Analyzed {len(created)} files.{note}", "success")
+            fail_note = f" {outcome['failed_count']} failed." if outcome["failed_count"] else ""
+            flash(f"Analyzed {len(created)} file(s).{fail_note}{note}", "success")
 
             # A batch can go straight to one merged PDF instead of the list.
             if request.form.get("batch_report") == "combined":
@@ -342,14 +374,21 @@ def create_app(db_path: str | None = None) -> Flask:
     @app.route("/history")
     def history():
         conn = get_db()
-        rows = PlagStore.list_analyses(conn)
+        rows = PlagStore.list_history(conn, limit=PlagConfig.get_history_limit(conn))
         # After a batch run, the analyses that were just created come back
         # pre-ticked so the export/delete buttons act on exactly that batch.
         selected = {
             int(i) for i in (request.args.get("selected") or "").split(",") if i.isdigit()
         }
+        # A batch just analyzed arrives here with all its member ids in
+        # `selected` - auto-open its row so the result is immediately visible
+        # instead of sitting behind one more click.
+        open_batches = {
+            row["id"] for row in rows
+            if row["kind"] == "batch" and any(f["id"] in selected for f in row["files"])
+        }
         return render_template(
-            "history.html", analyses=rows, selected=selected,
+            "history.html", analyses=rows, selected=selected, open_batches=open_batches,
             history_limit=PlagConfig.get_history_limit(conn),
         )
 

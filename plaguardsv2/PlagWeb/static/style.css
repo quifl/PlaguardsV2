@@ -147,6 +147,8 @@ h1, h2, h3, .sitename { font-family: "Raleway", sans-serif; }
 h3 { font-size: 15px; color: var(--text); border-bottom: 1px solid var(--border); padding-bottom: 8px; margin-top: 10px; }
 .lede { color: var(--muted); margin-top: 14px; }
 .muted { color: var(--muted); }
+.result-timing { font-size: 12.5px; margin-top: 6px; }
+.result-timing i { margin-right: 2px; }
 
 .flash-container { margin-bottom: 12px; }
 .flash { padding: 10px 14px; border-radius: 6px; margin-bottom: 8px; }
@@ -587,6 +589,28 @@ pre, code { max-width: 100%; }
 .history-table th, .history-table td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); font-size: 13px; }
 .history-table th { color: var(--muted); font-weight: 600; }
 .history-table a { color: var(--accent); text-decoration: none; }
+
+/* A batch row's summary lives in the File cell - expanding it reveals the
+   per-file breakdown without disturbing the surrounding row's own columns
+   (Completed/Duration/Status/... still show the batch-level totals). */
+.batch-row td { vertical-align: top; }
+.batch-details summary { cursor: pointer; color: var(--text); list-style: none; }
+.batch-details summary::-webkit-details-marker { display: none; }
+.batch-details summary::before { content: "\25B8"; display: inline-block; margin-right: 5px; color: var(--muted); transition: transform 0.15s ease; }
+.batch-details[open] summary::before { transform: rotate(90deg); }
+.batch-details summary .muted { display: block; font-size: 12px; margin: 2px 0 0 17px; }
+.batch-file-list { list-style: none; margin: 8px 0 2px 17px; padding: 0; border-left: 2px solid var(--border); }
+.batch-file-list li {
+  display: flex; align-items: center; gap: 9px; flex-wrap: wrap;
+  padding: 6px 0 6px 12px; font-size: 12.5px; border-bottom: 1px dashed var(--border);
+}
+.batch-file-list li:last-child { border-bottom: none; }
+.bf-name { min-width: 140px; }
+.bf-meta { color: var(--muted); min-width: 60px; }
+
+.status-completed { background: rgba(63,192,122,0.18); color: var(--low); }
+.status-failed { background: rgba(229,86,107,0.18); color: var(--high); }
+.status-cancelled { background: rgba(133,146,172,0.18); color: var(--info); }
 
 .settings-form { margin-top: 20px; max-width: 900px; }
 /* One shared column template so every row - and every Save button - lines

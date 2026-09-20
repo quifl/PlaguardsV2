@@ -206,8 +206,8 @@ For geolocation, **local MaxMind GeoLite2 databases** are preferred over ipinfo 
 | Page | What it does |
 |---|---|
 | **Analyze** | Paste a script, or drop files anywhere on the page — `.ps1 .txt .vbs .js .bat .cmd .log`, or a `.zip`. Up to 200 files, 5 MB each, 100 MB per submission. A batch can produce separate reports or one combined document. The second card is the **IOC Checker**: one indicator, with the type detected automatically or chosen from the list. |
-| **Result** | Deobfuscated script, transform log, resolved variables and the original input on the left; findings with context, MITRE mapping, threat intel and triage controls on the right. Export the findings as PDF, Excel or CSV. |
-| **History** | Past analyses newest first. Select rows to export a zip of PDFs, build a combined report, or delete in bulk. Retention is configurable. |
+| **Result** | Deobfuscated script, transform log, resolved variables and the original input on the left; findings with context, MITRE mapping, threat intel and triage controls on the right. Export the findings as PDF, Excel or CSV. Started/completed timestamps and analysis duration are shown here and in History only - never in the PDF report. |
+| **History** | Past analyses newest first, each with its completion time, duration and status. A batch upload (several files, or a zip) collapses into one entry - expand it to see every file's own status and duration, or select the whole batch with one checkbox. Select rows to export a zip of PDFs, build a combined report, or delete in bulk. Retention is configurable, and a batch counts as a single slot against it regardless of how many files it contained. |
 | **Tutorial** | Every feature explained page by page, plus a guided tour that walks the whole app. |
 | **Settings** | API keys, the three GeoLite2 database paths (City, Country, ASN), history retention, the analyst name printed on reports, the UTC offset used for timestamps, and a danger zone that clears stored history. |
 
