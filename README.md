@@ -1,4 +1,4 @@
-# PlaguardsV2: Open Source Static Deobfuscation and IOC Detection Engine with Analyst Triage for Blue Teams.
+# PlaguardsV2: Open Source Static Deobfuscation and IOC Detection Engine with Analyst Triage for Blue Teams
 
 <p align="center">
 <img src="plaguardsv2/PlagWeb/static/assets/PlaguardsBanner.png" width="620" alt="PlaguardsV2">
@@ -14,6 +14,16 @@
  <a href="#"><img src="https://img.shields.io/badge/7_Threat_Intel_Providers-c81e4a"></a>
  <a href="https://github.com/baycysec/plaguards"><img src="https://img.shields.io/badge/Built_on-Plaguards_v1-640D5F"></a>
 </p>
+
+[What it does](#what-it-does) ·
+[Why it exists](#why-it-exists) ·
+[Features](#main-features) ·
+[Requirements](#requirements) ·
+[Deployment](#deployment-and-usage) ·
+[Architecture](#architecture) ·
+[Accuracy](#measuring-deobfuscation-accuracy) ·
+[Safety & privacy](#safety--privacy) ·
+[Credits](#credits)
 
 ## What it does
 
@@ -149,9 +159,11 @@ indicators, and a report you can hand to someone else.
 **1. Clone the repository.**
 
 ```console
-git clone <your-fork-url> plaguardsv2
-cd plaguardsv2
+git clone https://github.com/quifl/PlaguardsV2.git
+cd PlaguardsV2
 ```
+
+(or clone your own fork's URL instead, if you're contributing)
 
 **2. Run the installer.**
 
