@@ -21,7 +21,6 @@
 [Requirements](#requirements) ·
 [Deployment](#deployment-and-usage) ·
 [Architecture](#architecture) ·
-[Accuracy](#measuring-deobfuscation-accuracy) ·
 [Safety & privacy](#safety--privacy) ·
 [Credits](#credits)
 
@@ -264,28 +263,9 @@ docker compose up --build
 ```console
 python -m venv .venv
 # Windows: .venv\Scripts\activate      macOS/Linux: source .venv/bin/activate
-pip install -r requirements-dev.txt
+pip install -r requirements.txt
 flask --app plaguardsv2.PlagWeb run --debug
 ```
-
-**Tests:**
-
-```console
-pip install -r requirements-dev.txt
-pytest
-```
-
-The suite includes a corpus of benign, inert samples covering every supported technique across all seven accepted file types. Each one hides the same banner behind a different trick, and the tests assert we get the cleartext back.
-
-**End-to-end QA:**
-
-```console
-python tools/qa_everything.py              # writes qa-output/<timestamp>/
-```
-
-Builds a set of inert dummy samples (`.ps1`, `.vbs`, `.js`, `.bat`, `.cmd`, `.txt`, `.log`, plus a zip of all of them) and drives every feature with them: the engine and recipe search, the accuracy corpus, every dashboard page and form, Quick IOC Lookup, triage, single, redacted and combined PDF reports, the History zip export, CSV and Excel, Settings, the offline CyberChef and the CLI. Threat-intel answers are simulated with canned provider responses, so that path is covered without a single real request. Each check is timed. The run writes `QA-REPORT.md` next to every sample and report it produced, and exits non-zero if anything fails.
-
-It is safe to run anywhere: the network is blocked inside the process before anything loads, provider keys are hidden from it, and it works on a throwaway database, never on `data/` or `.env`.
 
 ## Architecture
 
@@ -329,10 +309,7 @@ plaguardsv2/
   PlagCLI.py           Click CLI
 plaguardsv2-cli.py     thin root entry point
 tools/
-  qa_everything.py     end-to-end QA run over dummy samples, with a report
-  bench_accuracy.py    accuracy corpus scorecard (see below)
   fetch_cyberchef.py   installs the optional offline CyberChef
-  capture_tutorial_figures.py  re-shoots the Tutorial screenshots
 ```
 
 ### Why the rules and a few other modules are split across many small files
@@ -340,27 +317,6 @@ tools/
 While this was being built, local antivirus real-time protection repeatedly quarantined source files that gathered several "AV-evasion technique" keywords in one place. AMSI references, reflective assembly loading and Defender-tampering commands together read like a loader cheat sheet to a heuristic scanner. The very content that makes the tool useful for detection makes its *source* look suspicious.
 
 Splitting the rule set and a few similarly dense modules into small, single-purpose files resolved it without changing any detection logic. If you hit the same problem while extending the rules or providers, keep new files small and focused, and consider a Defender exclusion for the project folder.
-
-## Measuring deobfuscation accuracy
-
-Unit tests prove a transform does what its author meant. They cannot tell you whether the engine got *worse* at deobfuscation, because the expected values live in the same head as the code. `tests/corpus/` is the answer to that: a generated, inert corpus whose ground truth comes from the seed rather than from the engine.
-
-```console
-python tools/bench_accuracy.py            # both splits
-python tools/bench_accuracy.py dev --failures
-python -m pytest tests/test_corpus_accuracy.py    # the release gates
-```
-
-Two numbers gate a change:
-
-| KPI | What it means |
-|---|---|
-| **Sample completeness** | Fraction of samples where *every* ground-truth indicator was recovered. Binary per sample, because a sample yielding 3 of 4 indicators saves an analyst no work: they still have to read the script, since they cannot know which one is missing. |
-| **False indicators** | Values reported as indicators that were never in the sample. The ratchet is **zero**. This is the observable form of the engine's worst failure mode: not missing an answer, but inventing one and presenting it with the same confidence as a real finding. |
-
-The corpus is split by **configuration**, not randomly. A random split puts structurally identical siblings on both sides, since two samples of the same technique differ only in the literal, so the score would measure template memorisation. The `dev` and `holdout` splits use the same technique families with disjoint payload pools and disjoint parameterisation. Iterate against `dev`; read `holdout` in aggregate only, and never fix an individual holdout failure, or it stops being a holdout.
-
-A word of caution on the headline number: 100% here means the corpus no longer discriminates, not that the engine is finished. When everything passes, the correct response is to add harder techniques. That is what the corpus is for.
 
 ## Safety & privacy
 

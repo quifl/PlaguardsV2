@@ -19,3 +19,12 @@ plaguardsv2/PlagWeb/cyberchef.staging/
 
 # Output of tools/qa_everything.py: dummy samples, reports, QA-REPORT.md.
 qa-output/
+
+# Developer-only: test suite, QA and maintenance tools, CI. Kept on the
+# maintainer's machine; none of it is needed to install or run PlaguardsV2.
+tests/
+.github/
+pytest.ini
+requirements-dev.txt
+tools/*
+!tools/fetch_cyberchef.py
