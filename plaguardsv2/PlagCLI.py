@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import os
 import sys
 
 import click
@@ -18,7 +19,7 @@ VERDICT_COLOR = {
 
 @click.group()
 def cli():
-    """PlaguardsV2: fast static triage for obfuscated PowerShell / suspicious scripts."""
+    """PlaguardsV2: static deobfuscation and IOC triage for PowerShell, VBScript, JScript and batch scripts."""
 
 
 @cli.command()
@@ -32,12 +33,13 @@ def cli():
 @click.option("--redact-iocs", is_flag=True, help="Print indicator values black-on-black in the PDF (redacted copy).")
 @click.option("--db-path", type=click.Path(dir_okay=False), default=None, help="SQLite DB path (default: data/plaguardsv2.db).")
 def analyze(path, no_intel, no_cache, no_store, triage, pdf_path, json_path, redact_iocs, db_path):
-    """Analyze PATH (or stdin if omitted / '-'). Provider keys are read from
-    the Settings database / environment - see PlagConfig.py / .env."""
+    """Analyze PATH, or stdin when PATH is omitted or '-'. Provider keys come
+    from the dashboard's Settings page, or from .env."""
     if path and path != "-":
         with open(path, "r", encoding="utf-8", errors="replace") as fh:
             text = fh.read()
-        filename = path
+        # The name only: a full path would put the analyst's folder layout on the report cover.
+        filename = os.path.basename(path)
     else:
         text = sys.stdin.read()
         filename = "stdin"
@@ -56,18 +58,28 @@ def analyze(path, no_intel, no_cache, no_store, triage, pdf_path, json_path, red
 
     _print_summary(result)
 
+    # The stored copy carries triage verdicts; the in-memory result never does.
+    stored = PlagStore.get_analysis(conn, result["id"]) if conn is not None and result.get("id") else None
     if triage:
         _interactive_triage(conn, result)
+        if conn is not None and result.get("id"):
+            stored = PlagStore.get_analysis(conn, result["id"])
 
     if json_path:
+        payload = _json_safe(result)
+        if stored:
+            # Matched by indicator, since the database returns findings sorted by severity.
+            verdicts = {(f["type"], f["value"]): f.get("triage_status") for f in stored["findings"]}
+            for finding in payload["findings"]:
+                finding["triage_status"] = verdicts.get((finding["type"], finding["value"]), "unreviewed")
         with open(json_path, "w", encoding="utf-8") as fh:
-            json.dump(_json_safe(result), fh, indent=2, default=str)
+            json.dump(payload, fh, indent=2, default=str)
         click.echo(f"\nJSON written to {json_path}")
 
     if pdf_path:
         analyst_name = PlagConfig.get_analyst_name(conn)
         pdf_bytes = PlagReport.render_pdf(
-            result, analyst_name=analyst_name, utc_offset=PlagConfig.get_utc_offset(conn),
+            stored or result, analyst_name=analyst_name, utc_offset=PlagConfig.get_utc_offset(conn),
             redact_iocs=redact_iocs, conn=conn,
         )
         with open(pdf_path, "wb") as fh:
@@ -79,7 +91,7 @@ def analyze(path, no_intel, no_cache, no_store, triage, pdf_path, json_path, red
 
 
 @cli.command(name="list")
-@click.option("--db-path", type=click.Path(dir_okay=False), default=None)
+@click.option("--db-path", type=click.Path(dir_okay=False), default=None, help="SQLite DB path (default: data/plaguardsv2.db).")
 @click.option("--limit", default=25, show_default=True)
 def list_analyses(db_path, limit):
     """List past analyses stored in the local database."""
@@ -101,11 +113,11 @@ def _print_summary(result: dict) -> None:
             click.echo(f"  - {entry}")
     elif result["findings"]:
         click.echo(
-            "No further static rewrites could be safely applied - see findings below for "
-            "obfuscation techniques that were detected but couldn't be fully resolved automatically."
+            "No further static rewrites could be safely applied. The findings below list "
+            "obfuscation techniques that were detected but not fully resolved."
         )
     else:
-        click.echo("No deobfuscation transforms were needed - input appears to already be plaintext.")
+        click.echo("No deobfuscation transforms were needed; the input already appears to be plaintext.")
 
     click.echo(click.style("\n--- Deobfuscated script ---", bold=True))
     click.echo(result["deobfuscated"])

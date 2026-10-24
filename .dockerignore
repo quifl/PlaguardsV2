@@ -22,3 +22,5 @@ tests/
 install.ps1
 tools/
 .github/
+
+qa-output/

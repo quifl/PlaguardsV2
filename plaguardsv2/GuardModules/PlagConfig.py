@@ -13,6 +13,12 @@ from __future__ import annotations
 import os
 import sqlite3
 
+from dotenv import load_dotenv
+
+# Every entry point resolves keys through this module, so loading .env here
+# is what makes it work outside Docker. Never overrides the environment.
+load_dotenv()
+
 PROVIDERS = [
     dict(id="virustotal", label="VirusTotal", env_var="VT_API_KEY",
          docs_url="https://www.virustotal.com/gui/my-apikey"),
@@ -63,11 +69,28 @@ def set_api_key(conn: sqlite3.Connection, provider_id: str, value: str) -> None:
     PlagStore.set_setting(conn, provider["env_var"], value.strip())
 
 
+def clear_api_key(conn: sqlite3.Connection, provider_id: str) -> None:
+    """Forget the key saved in Settings. A key in .env still applies after this."""
+    set_api_key(conn, provider_id, "")
+
+
+def key_source(conn: sqlite3.Connection | None, provider_id: str) -> str | None:
+    """Where the active key comes from: "settings", "env", or None when unset."""
+    from . import PlagStore
+
+    provider = _BY_ID.get(provider_id)
+    if provider is None:
+        return None
+    if conn is not None and PlagStore.get_setting(conn, provider["env_var"]):
+        return "settings"
+    return "env" if os.environ.get(provider["env_var"]) else None
+
+
 def all_keys(conn: sqlite3.Connection | None) -> dict:
     return {p["id"]: get_api_key(conn, p["id"]) for p in PROVIDERS}
 
 
-# --- General app settings (not API keys, but stored the same way) ---------
+# General app settings (not API keys, but stored the same way)
 
 GEOIP_DB_KEYS = {
     "city": "GEOIP_CITY_DB_PATH",

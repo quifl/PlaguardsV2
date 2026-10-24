@@ -1,15 +1,38 @@
 {% extends "base.html" %}
 {% block title %}Tutorial - PlaguardsV2{% endblock %}
+
+{#- One figure per section, captured by tools/capture_tutorial_figures.py;
+    re-run it after a UI change. A figure with a tour chapter starts it. -#}
+{% macro figure(name, alt, caption, tour=None) %}
+<figure class="tut-figure">
+  {% if tour %}
+  <a href="#" data-start-tour="{{ tour }}" title="Walk me through this on the real page">
+    <img src="{{ url_for('static', filename='assets/tutorial/' ~ name ~ '.png') }}"
+         alt="{{ alt }}" loading="lazy" />
+  </a>
+  {% else %}
+  <span class="frame">
+    <img src="{{ url_for('static', filename='assets/tutorial/' ~ name ~ '.png') }}"
+         alt="{{ alt }}" loading="lazy" />
+  </span>
+  {% endif %}
+  <figcaption>
+    <span>{{ caption }}</span>
+    {% if tour %}<span class="figure-cue">Click the screenshot to be walked through it live</span>{% endif %}
+  </figcaption>
+</figure>
+{% endmacro %}
 {% block content %}
 <div class="section-title"><h2>Tutorial</h2></div>
 
 <div class="pocolo-tip">
   <img src="{{ url_for('static', filename='assets/pocolo.png') }}" alt="Pocolo" />
   <div class="bubble">
-    I'm <strong>Pocolo</strong>. Below is every part of PlaguardsV2, page by page &mdash;
+    I'm <strong>Pocolo</strong>. Below is every part of PlaguardsV2, page by page:
     each control you can click, and why it does what it does. Prefer to be shown?
-    <em>Tour everything</em> walks the whole app in order, hopping between pages as it goes;
-    each section also has its own <em>Show me this</em>.
+    <em>Tour everything</em> walks the whole app in order, hopping between pages as it goes.
+    Each section also has its own <em>Show me this</em>, and clicking a section's screenshot
+    starts the same tour.
     <div class="pocolo-actions">
       <a class="link-chip" href="#" data-start-tour="everything"><i class="bi bi-play-circle"></i> Tour everything</a>
       <a class="link-chip" href="{{ url_for('run_example') }}" data-busy-link="Running the example…"><i class="bi bi-lightning-charge"></i> Run the example script</a>
@@ -17,50 +40,101 @@
   </div>
 </div>
 
-<div class="tutorial-card">
+<nav class="tutorial-card tutorial-toc" id="contents" aria-label="Tutorial contents">
+  <h3>Contents</h3>
+  <div class="toc-groups">
+    <section class="toc-group">
+      <h4>Orientation</h4>
+      <ul>
+        <li><a class="toc-link" href="#overview"><i class="bi bi-stars"></i><span>What this tool is for</span></a></li>
+        <li><a class="toc-link" href="#getting-around"><i class="bi bi-layout-sidebar"></i><span>Getting around</span></a></li>
+      </ul>
+    </section>
+    <section class="toc-group">
+      <h4>Working through an analysis</h4>
+      <ul>
+        <li><a class="toc-link" href="#analyze"><i class="bi bi-file-earmark-code"></i><span>1. Analyze page</span></a></li>
+        <li><a class="toc-link" href="#result-script"><i class="bi bi-braces"></i><span>2. Result page: left pane</span></a></li>
+        <li><a class="toc-link" href="#result-findings"><i class="bi bi-list-check"></i><span>3. Result page: findings and triage</span></a></li>
+        <li><a class="toc-link" href="#threat-intel"><i class="bi bi-shield-check"></i><span>4. Threat intelligence</span></a></li>
+        <li><a class="toc-link" href="#geolocation"><i class="bi bi-geo-alt"></i><span>5. Where the addresses are</span></a></li>
+      </ul>
+    </section>
+    <section class="toc-group">
+      <h4>Output and setup</h4>
+      <ul>
+        <li><a class="toc-link" href="#reports"><i class="bi bi-file-earmark-pdf"></i><span>6. Reports</span></a></li>
+        <li><a class="toc-link" href="#history"><i class="bi bi-clock-history"></i><span>7. History page</span></a></li>
+        <li><a class="toc-link" href="#settings"><i class="bi bi-gear"></i><span>8. Settings page</span></a></li>
+        <li><a class="toc-link" href="#cli"><i class="bi bi-terminal"></i><span>9. Command line</span></a></li>
+      </ul>
+    </section>
+  </div>
+</nav>
+
+<div class="tutorial-card" id="overview">
   <h3>What this tool is for</h3>
+  <div class="card-split">
+      <div class="card-figure">{{ figure("overview", "A finished analysis: cleaned-up script on the left, findings on the right",
+              "What you get back: the script made readable, every indicator pulled out and checked.",
+              tour="findings") }}</div>
+      <div class="card-body">
   <p>You give it a suspicious script. It gives you back readable code, a list of
   indicators, and a report you can hand to someone else.</p>
   <ul>
-    <li><strong>Reads the script for you</strong> &mdash; PowerShell, VBScript,
+    <li><strong>Reads the script for you</strong>. PowerShell, VBScript,
       JScript, batch and cmd all get unpicked into plain text.</li>
-    <li><strong>Finds the indicators</strong> &mdash; including ones the script
+    <li><strong>Finds the indicators</strong>, including ones the script
       only assembles as it runs.</li>
-    <li><strong>Checks them automatically</strong> &mdash; every indicator is looked
+    <li><strong>Checks them automatically</strong>. Every indicator is looked
       up as part of the analysis, not as a separate errand.</li>
-    <li><strong>Tells you where they are</strong> &mdash; country, city, ASN and
-      reverse DNS for every address.</li>
-    <li><strong>Lets you decide</strong> &mdash; your verdict on each finding.</li>
-    <li><strong>Writes it up</strong> &mdash; a PDF, plus Excel and CSV.</li>
+    <li><strong>Tells you where they are</strong>. Country, region, operator
+      and reverse DNS for every address, with the accuracy radius attached.</li>
+    <li><strong>Lets you decide</strong>. Your verdict on each finding.</li>
+    <li><strong>Writes it up</strong>. A PDF, plus Excel and CSV.</li>
   </ul>
   <p class="why"><strong>Nothing is ever executed.</strong> Every transform rewrites
   literal values only. There is no <span class="mono">eval</span>, no sandbox, and no
-  PowerShell process &mdash; so a hostile script cannot do anything by being analyzed.</p>
+  PowerShell process, so a hostile script cannot do anything by being analyzed.</p>
+      </div>
+  </div>
+  <a class="toc-back" href="#contents"><i class="bi bi-arrow-up-short"></i> Back to contents</a>
 </div>
 
-<div class="tutorial-card">
+<div class="tutorial-card" id="getting-around">
   <h3>Getting around</h3>
+  <div class="card-split">
+      <div class="card-figure">{{ figure("navigation", "The sidebar and the working area next to it",
+              "The frame every page shares.", tour="navigation") }}</div>
+      <div class="card-body">
   <p>The dark sidebar is on every page. <strong>Analyze</strong> is the home page,
   <strong>History</strong> lists what you've already run, <strong>Tutorial</strong> is
-  here, and <strong>Settings</strong> holds API keys and preferences. The Pocolo
-  portrait at the top starts the guided tour from wherever you are.</p>
-  <p>Anything that takes a moment &mdash; running an analysis, building a PDF &mdash;
+  here, and <strong>Settings</strong> holds API keys and preferences. The logo at the
+  top always takes you back to Analyze.</p>
+  <p>Anything that takes a moment (running an analysis, building a PDF)
   dims the screen and shows what it's doing, so you never wonder whether a click
   registered.</p>
   <div class="pocolo-actions">
     <a class="link-chip" href="#" data-start-tour="navigation"><i class="bi bi-play-circle"></i> Show me this</a>
   </div>
+      </div>
+  </div>
+  <a class="toc-back" href="#contents"><i class="bi bi-arrow-up-short"></i> Back to contents</a>
 </div>
 
-<div class="tutorial-card">
+<div class="tutorial-card" id="analyze">
   <h3>1. Analyze page</h3>
-
+  <div class="card-split">
+      <div class="card-figure">{{ figure("analyze", "The Analyze form beside the Quick IOC Lookup card",
+              "The two ways in: a whole script on the left, a single indicator on the right.",
+              tour="analysis") }}</div>
+      <div class="card-body">
   <h4>Analyze a Script</h4>
   <ol>
-    <li><strong>Paste</strong> a script into the big box &mdash; PowerShell, but also VBS,
+    <li><strong>Paste</strong> a script into the big box: PowerShell, but also VBS,
       JScript, batch or a raw log line.</li>
     <li>Or use the <strong>drop box</strong>: click <em>Choose files</em>, or drag files
-      from Explorer &mdash; anywhere on the page works, not just the box. Accepted:
+      from Explorer. Anywhere on the page works, not just the box. Accepted:
       <span class="mono">.ps1 .txt .vbs .js .bat .cmd .log</span>, or a
       <span class="mono">.zip</span> containing them.</li>
     <li>Submitting more than one file? <strong>Separate reports</strong> gives one PDF each
@@ -68,14 +142,14 @@
       returns a single document covering all of them.</li>
     <li>Leave <strong>Skip threat-intel lookups</strong> unticked and every indicator
       found is checked automatically, and every address located. Tick it only when
-      you're offline or have no keys &mdash; deobfuscation and extraction still run.</li>
+      you're offline or have no keys. Deobfuscation and extraction still run.</li>
     <li>Click <strong>Analyze</strong>. One file opens its result page; several files
       (or a zip) are each analyzed separately and you land on History.</li>
   </ol>
   <p class="why">Multiple files at once is the fast path for a folder of samples.
   A submission is capped at {{ batch_limits.entries }} files,
   {{ batch_limits.entry_mb }}&nbsp;MB each and {{ batch_limits.total_mb }}&nbsp;MB in total,
-  whether they arrive loose or in an archive &mdash; and directory paths inside a zip are
+  whether they arrive loose or in an archive, and directory paths inside a zip are
   discarded, so a crafted archive cannot write outside the extraction area.</p>
 
   <h4>Quick IOC Lookup</h4>
@@ -84,38 +158,51 @@
       it directly. Nothing is stored in History.</li>
     <li>Leave the type on <strong>Detect automatically</strong> and the shape of the value
       decides: IP, domain, URL or hash.</li>
-    <li>Or pick one explicitly &mdash; <strong>IP address</strong>, <strong>Domain</strong>,
+    <li>Or pick one explicitly: <strong>IP address</strong>, <strong>Domain</strong>,
       <strong>URL</strong>, <strong>File hash</strong> or
       <strong>Malware signature / family</strong>.</li>
   </ol>
   <p class="why">A signature is a family name like <span class="mono">AgentTesla</span> or
-  <span class="mono">Formbook</span>. It has no recognisable shape, so auto-detect can never
-  find it &mdash; choosing the type by hand is the only way to reach that lookup. It is
-  checked against MalwareBazaar, the way the original Plaguards' <span class="mono">signature</span>
+  <span class="mono">Formbook</span>. It has no recognizable shape for auto-detect to find,
+  so choosing the type by hand is the only way to reach that lookup. It is checked against
+  MalwareBazaar, the way the original Plaguards' <span class="mono">signature</span>
   query worked.</p>
 
   <div class="pocolo-actions">
     <a class="link-chip" href="#" data-start-tour="analysis"><i class="bi bi-play-circle"></i> Show me the script form</a>
     <a class="link-chip" href="#" data-start-tour="lookup"><i class="bi bi-play-circle"></i> Show me the lookup</a>
   </div>
+      </div>
+  </div>
+  <a class="toc-back" href="#contents"><i class="bi bi-arrow-up-short"></i> Back to contents</a>
 </div>
 
-<div class="tutorial-card">
-  <h3>2. Result page &mdash; left pane</h3>
-
+<div class="tutorial-card" id="result-script">
+  <h3>2. Result page: left pane</h3>
+  <div class="card-split">
+      <div class="card-figure">{{ figure("deobfuscation", "The left pane of a result: transform log above the cleaned-up script",
+              "The cleaned-up script, and the log of every pass that changed something.",
+              tour="findings") }}</div>
+      <div class="card-body">
   <h4>Deobfuscated Script</h4>
   <ol>
     <li>The result is shown <strong>reformatted, one statement per line</strong>. If nothing
       could be rewritten the page says so plainly rather than implying the input is clean.</li>
-    <li><strong>&ldquo;N deobfuscation transform(s) applied&rdquo;</strong> opens the transform
-      log &mdash; every pass that changed something, in the order it ran.</li>
-    <li><strong>&ldquo;N variable value(s) statically resolved&rdquo;</strong> is the table of
+    <li><strong>&ldquo;N deobfuscation transforms applied&rdquo;</strong> opens the transform
+      log: every pass that changed something, in the order it ran.</li>
+    <li><strong>&ldquo;N variable values statically resolved&rdquo;</strong> is the table of
       variables rebuilt by following assignments in order. This is usually where the real
       C2 address, port or mutex finally appears.</li>
-    <li>A resolved value can still be a <em>stage</em> rather than the payload &mdash; a
+    <li>A resolved value can still be a <em>stage</em> rather than the payload: a
       Base64 blob, or a list of character codes. Those are decoded again and the plaintext
       shown underneath, so a multi-stage peel reads end to end instead of stopping at a
       wall of digits.</li>
+    <li><strong>&ldquo;N encoded runs checked against CyberChef&rsquo;s decoders&rdquo;</strong>
+      lists each encoded string with the recipe that opened it, such as
+      <span class="mono">From Hex &gt; From Base64 &gt; Gunzip</span>. The
+      <strong>CyberChef</strong> button opens that recipe in the offline copy so you can check it
+      or go further. A run with no recipe is still encoded, or encrypted with a key that is not
+      in the sample.</li>
     <li><strong>&ldquo;Show original input&rdquo;</strong> reveals exactly what you submitted,
       untouched, for comparison.</li>
   </ol>
@@ -127,12 +214,20 @@
   <div class="pocolo-actions">
     <a class="link-chip" href="#" data-start-tour="findings"><i class="bi bi-play-circle"></i> Show me this</a>
   </div>
+      </div>
+  </div>
+  <a class="toc-back" href="#contents"><i class="bi bi-arrow-up-short"></i> Back to contents</a>
 </div>
 
-<div class="tutorial-card">
-  <h3>3. Result page &mdash; findings and triage</h3>
+<div class="tutorial-card" id="result-findings">
+  <h3>3. Result page: findings and triage</h3>
+  <div class="card-split">
+      <div class="card-figure">{{ figure("findings", "Finding cards on the result page, color-coded by severity",
+              "Each card carries its severity, the surrounding context, the technique, and your verdict.",
+              tour="findings") }}</div>
+      <div class="card-body">
   <ol>
-    <li>Every finding is a card colour-coded by severity: IPv4 and IPv6 addresses, domains,
+    <li>Every finding is a card color-coded by severity: IPv4 and IPv6 addresses, domains,
       URLs, hashes, registry keys, mutexes, User-Agents, crypto wallets, Windows and UNC
       paths, scheduled-task and service names, and suspicious code signatures. High-severity
       cards start open.</li>
@@ -149,10 +244,18 @@
   <div class="pocolo-actions">
     <a class="link-chip" href="#" data-start-tour="findings"><i class="bi bi-play-circle"></i> Show me this</a>
   </div>
+      </div>
+  </div>
+  <a class="toc-back" href="#contents"><i class="bi bi-arrow-up-short"></i> Back to contents</a>
 </div>
 
-<div class="tutorial-card">
+<div class="tutorial-card" id="threat-intel">
   <h3>4. Threat intelligence</h3>
+  <div class="card-split">
+      <div class="card-figure">{{ figure("intel", "A report page listing every provider's answer for one indicator",
+              "Every configured provider is asked, and each one's own answer is kept.",
+              tour="threatintel") }}</div>
+      <div class="card-body">
   <ol>
     <li>Indicators are checked against whichever of the seven providers you've configured
       under Settings.</li>
@@ -166,43 +269,66 @@
   </ol>
   <p class="why">A documentation IP or a <span class="mono">.invalid</span> domain can never
   have a reputation. Querying them wastes rate-limited quota and returns confusing HTTP
-  errors, so they are ruled out up front &mdash; but anything a provider will genuinely
+  errors, so they are ruled out up front, but anything a provider will genuinely
   answer for is still asked.</p>
   <div class="pocolo-actions">
-    <a class="link-chip" href="#" data-start-tour="lookup"><i class="bi bi-play-circle"></i> Show me this</a>
+    <a class="link-chip" href="#" data-start-tour="threatintel"><i class="bi bi-play-circle"></i> Show me this</a>
   </div>
+      </div>
+  </div>
+  <a class="toc-back" href="#contents"><i class="bi bi-arrow-up-short"></i> Back to contents</a>
 </div>
 
-<div class="tutorial-card">
+<div class="tutorial-card" id="geolocation">
   <h3>5. Where the addresses are</h3>
+  <div class="card-split">
+      <div class="card-figure">{{ figure("geolocation", "The geolocation block for one address in a generated report",
+              "What is recorded per address. Note the radius the coordinates are good to.",
+              tour="geolocation") }}</div>
+      <div class="card-body">
   <ul>
-    <li>Every IP found is located: <strong>country, city, coordinates, continent,
-      ASN, organisation, network</strong> and <strong>reverse DNS</strong>.</li>
-    <li>Each one is also categorised &mdash; public, private, documentation,
-      loopback &mdash; so a reserved address is not presented as a real location.</li>
-    <li>Point Settings &rarr; General at a <strong>MaxMind GeoLite2 database</strong>
-      and this runs entirely offline.</li>
-    <li>No database? Add an <strong>ipinfo.io</strong> token instead. With neither,
-      geolocation is simply skipped.</li>
+    <li><strong>Where it is</strong>. Country, region, city, postal code,
+      coordinates, and the <strong>accuracy radius</strong> those coordinates are good
+      to. That last one matters: a country-level guess and a street-level fix look
+      identical without it.</li>
+    <li><strong>Who runs it</strong>. ASN, organization and network, plus the
+      country the block is <em>registered</em> in when that differs from where it sits.</li>
+    <li><strong>Also recorded</strong>. Time zone and reverse DNS.</li>
+    <li>Each address is categorized too (public, private, documentation,
+      loopback), so a reserved address is never shown as a real location.</li>
+    <li>Point Settings &rarr; <strong>Geolocation Databases</strong> at a MaxMind
+      GeoLite2 file and this runs entirely offline. No database? An
+      <strong>ipinfo.io</strong> token does the same job over the network. With
+      neither, the step is skipped.</li>
   </ul>
   <p class="why">A reputation verdict says whether an address is known bad.
-  Geolocation says whether traffic to it makes sense at all &mdash; a share
-  reaching a host two continents away is worth a question even when no provider
+  Geolocation says whether traffic to it makes sense at all. A script calling
+  out to a host two continents away is worth a question even when no provider
   has ever heard of it.</p>
+  <div class="pocolo-actions">
+    <a class="link-chip" href="#" data-start-tour="geolocation"><i class="bi bi-play-circle"></i> Show me this</a>
+  </div>
+      </div>
+  </div>
+  <a class="toc-back" href="#contents"><i class="bi bi-arrow-up-short"></i> Back to contents</a>
 </div>
 
-<div class="tutorial-card">
+<div class="tutorial-card" id="reports">
   <h3>6. Reports</h3>
+  <div class="card-split">
+      <div class="card-figure">{{ figure("report", "The cover and summary pages of a generated report",
+              "How a report opens: cover, then the summary and the indicators at a glance.", tour="reports") }}</div>
+      <div class="card-body">
   <ol>
     <li><strong>View Report</strong> opens the PDF in a new tab; <strong>Download Report</strong>
       saves it.</li>
-    <li>Tick <strong>Redact IOC values</strong> first to print every indicator black-on-black
-      &mdash; present in the file, unreadable at a glance.</li>
+    <li>Tick <strong>Redact IOC values</strong> first to print every indicator
+      black-on-black: present in the file, unreadable at a glance.</li>
     <li>From History, select several analyses and choose <strong>Combined report</strong> for one
       document covering all of them, or <strong>Export as zip</strong> for separate PDFs.</li>
   </ol>
   <p>Each report opens with a cover, a <strong>table of contents</strong> and a formal
-  <strong>disclaimer</strong> notice &mdash; none of them numbered. Page&nbsp;1 is the analysis
+  <strong>disclaimer</strong> notice, none of them numbered. Page&nbsp;1 is the analysis
   summary. After that come the findings table, per-finding detail grouped by severity, the
   transform log and resolved variables, then <strong>Appendix&nbsp;A</strong> (the deobfuscated
   script) and <strong>Appendix&nbsp;B</strong> (the original input). Every contents entry is
@@ -212,61 +338,88 @@
   <div class="pocolo-actions">
     <a class="link-chip" href="#" data-start-tour="reports"><i class="bi bi-play-circle"></i> Show me this</a>
   </div>
+      </div>
+  </div>
+  <a class="toc-back" href="#contents"><i class="bi bi-arrow-up-short"></i> Back to contents</a>
 </div>
 
-<div class="tutorial-card">
-  <h3>6. History page</h3>
+<div class="tutorial-card" id="history">
+  <h3>7. History page</h3>
+  <div class="card-split">
+      <div class="card-figure">{{ figure("history", "The History table with a batch expanded into its files",
+              "A batch takes one row, and expands to the files inside it.", tour="history") }}</div>
+      <div class="card-body">
   <ol>
     <li>Past analyses, newest first, with the file name, when it completed, how long the
       analysis took, its status, the finding count and how many were high severity.</li>
     <li>A batch upload (several files, or a zip) is <strong>one entry</strong>, not one per
-      file &mdash; expand it to see each file's own status and duration, and <strong>View</strong>
+      file. Expand it to see each file's own status and duration, and <strong>View</strong>
       any of them individually. Its own checkbox selects every file inside it at once.</li>
     <li><strong>View</strong> reopens an analysis, triage verdicts and all.</li>
     <li>Tick rows (or <strong>Select all</strong>) to <strong>Export as zip</strong>,
       build a <strong>Combined report</strong>, or <strong>Delete Selected</strong>.</li>
-    <li>Only the most recent are kept &mdash; set how many under Settings &rarr; General.
+    <li>Only the most recent are kept. Set how many under Settings &rarr; General.
       Older ones are pruned automatically after each run; a batch still only costs one slot,
       however many files it contained.</li>
   </ol>
-  <p class="why">Start/completion times and duration are shown here and on the Result page
-  only &mdash; never in the PDF report, which stays exactly as it always has.</p>
+  <p class="why">Start and completion times and the duration are shown here and on the
+  Result page only. The PDF report leaves them out, since they describe this machine's
+  run rather than the sample.</p>
   <div class="pocolo-actions">
     <a class="link-chip" href="#" data-start-tour="history"><i class="bi bi-play-circle"></i> Show me this</a>
   </div>
+      </div>
+  </div>
+  <a class="toc-back" href="#contents"><i class="bi bi-arrow-up-short"></i> Back to contents</a>
 </div>
 
-<div class="tutorial-card">
-  <h3>7. Settings page</h3>
+<div class="tutorial-card" id="settings">
+  <h3>8. Settings page</h3>
+  <div class="card-split">
+      <div class="card-figure">{{ figure("settings", "The Settings page, showing API keys and the geolocation databases",
+              "Where keys and database paths go. Green means configured, red means skipped.", tour="settings") }}</div>
+      <div class="card-body">
   <ol>
-    <li><strong>Threat Intel API Keys</strong> &mdash; one field per provider. A green box
-      means configured, red means that provider is skipped. Each row links to where you
-      get a key. Saving a blank field leaves the stored key alone.</li>
-    <li><strong>Geolocation Databases</strong> &mdash; one field each for MaxMind's
+    <li><strong>Threat Intel API Keys</strong>. One field per provider. Green means
+      configured, red means that provider is skipped, and a key set in
+      <span class="mono">.env</span> is shown as such. Each row links to where you get a key.
+      Saving a blank field leaves the stored key alone; <strong>Remove</strong> forgets a
+      key saved here.</li>
+    <li><strong>Geolocation Databases</strong>. One field each for MaxMind's
       GeoLite2 City, Country and ASN. Each accepts a <span class="mono">.mmdb</span>,
       a folder, or the <span class="mono">.tar.gz</span> exactly as downloaded. Fill in
-      any mix and they are merged into one record per address; the section carries
-      step-by-step instructions for obtaining them.</li>
-    <li><strong>General</strong> &mdash; how many analyses to keep, the analyst or
-      organisation name printed on reports, and the UTC offset used for every timestamp
+      any mix and they are merged into one record per address. Each field says whether a
+      database was found at its path, and the section has step-by-step instructions for
+      getting them.</li>
+    <li><strong>CyberChef (offline)</strong>. Whether the local CyberChef is installed,
+      with a link to open it, or the one command that installs it.</li>
+    <li><strong>General</strong>. How many analyses to keep, the analyst or
+      organization name printed on reports, and the UTC offset used for every timestamp
       in reports and History.</li>
-    <li><strong>Danger Zone</strong> &mdash; clears every stored analysis, finding and
+    <li><strong>Danger Zone</strong> clears every stored analysis, finding and
       triage decision. API keys and general settings survive it.</li>
   </ol>
   <p class="why">Keys live in the local SQLite database on this machine. Only the extracted
-  indicator value is ever sent to a provider &mdash; never your script, and never the
+  indicator value is ever sent to a provider, never your script, and never the
   surrounding context.</p>
   <div class="pocolo-actions">
     <a class="link-chip" href="#" data-start-tour="settings"><i class="bi bi-play-circle"></i> Show me this</a>
   </div>
+      </div>
+  </div>
+  <a class="toc-back" href="#contents"><i class="bi bi-arrow-up-short"></i> Back to contents</a>
 </div>
 
-<div class="tutorial-card">
+<div class="tutorial-card" id="cli">
   <h3>9. Command line</h3>
+  <div class="card-split">
+      <div class="card-figure">{{ figure("cli", "Terminal output from analyzing the bundled example script",
+              "The same engine, driven from a terminal. This is its real output.") }}</div>
+      <div class="card-body">
   <p>Everything above is available headless, for scripting a queue of samples:</p>
   <ol>
-    <li><span class="mono">python -m plaguardsv2.PlagCLI analyze sample.ps1</span> &mdash; or pipe
-      the script in on stdin.</li>
+    <li><span class="mono">python plaguardsv2-cli.py analyze sample.ps1</span>, or pipe
+      the script in on stdin. <span class="mono">list</span> shows past analyses.</li>
     <li><span class="mono">--pdf FILE</span> and <span class="mono">--json FILE</span> write the
       same report and results you'd get in the browser;
       <span class="mono">--redact-iocs</span> produces the redacted copy.</li>
@@ -275,7 +428,10 @@
       <span class="mono">--triage</span> walks you through the findings interactively.</li>
   </ol>
   <p class="why">The CLI and the web UI share one database, so anything you analyze from a
-  terminal shows up in History &mdash; and anything you triage in the browser is reflected in
+  terminal shows up in History, and anything you triage in the browser is reflected in
   a report generated later from the command line.</p>
+      </div>
+  </div>
+  <a class="toc-back" href="#contents"><i class="bi bi-arrow-up-short"></i> Back to contents</a>
 </div>
 {% endblock %}

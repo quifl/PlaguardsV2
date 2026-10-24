@@ -17,10 +17,8 @@ from .PlagTokens import Token, tokenize
 MAX_DEPTH = 40
 MAX_STRING_LEN = 200_000
 
-# `-replace` and `-split` take their pattern straight from the sample under
-# analysis, so the pattern is hostile input. .NET mitigates the resulting
-# backtracking blowup with a match timeout; Python's re has no such thing, so
-# the only defence available here is to refuse dangerous shapes up front.
+# -replace and -split patterns come from the sample, so they are hostile. .NET
+# guards backtracking with a timeout; Python's re cannot, so bad shapes are refused.
 MAX_REGEX_LEN = 256
 MAX_REPEAT_BOUND = 1000
 
@@ -112,10 +110,8 @@ def _regex_is_risky(pattern: str) -> bool:
     return False
 
 
-# One pass, not a sequence of str.replace calls: replacing "$$" first and then
-# "$1" would rewrite the "$" that the first step had just produced, so "$$$1" -
-# the documented way to emit a literal "$" ahead of a backreference - would
-# come out as a second backreference instead.
+# One pass, not chained str.replace: rewriting "$$" first would turn the "$"
+# it produced into a backreference, breaking "$$$1".
 _DOTNET_REPL_RE = re.compile(r"\$(?:(\$)|\{([A-Za-z_][A-Za-z0-9_]*|\d+)\}|(\d+)|(&))")
 
 
@@ -243,7 +239,7 @@ class Parser:
         self.vars = variables
         self.depth = 0
 
-    # -- helpers ----------------------------------------------------------
+    # helpers
     def peek(self, offset: int = 0) -> Token | None:
         idx = self.i + offset
         return self.t[idx] if idx < len(self.t) else None
@@ -264,7 +260,7 @@ class Parser:
     def expect_punct(self, value: str) -> bool:
         return self.accept("punct", value)
 
-    # -- grammar ----------------------------------------------------------
+    # grammar
     def parse_expression(self):
         self.depth += 1
         if self.depth > MAX_DEPTH:
@@ -496,7 +492,7 @@ class Parser:
         finally:
             self.depth -= 1
 
-    # -- [ ... ] type constructs -----------------------------------------
+    # [ ... ] type constructs
     def _parse_bracket_construct(self):
         start = self.i
         self.next()  # consume the opening '['
@@ -526,9 +522,8 @@ class Parser:
                     return chr(operand)
                 except (ValueError, OverflowError):
                     return UNKNOWN
-            # A one-character non-digit string is already a char; the digit
-            # case stays on the code-point path below, where the corpus needs
-            # it for `[char]$_` over a split list of decimal byte values.
+            # A one-character non-digit string is already a char. Digits stay on the
+            # code-point path, which `[char]$_` over split decimal byte values needs.
             if isinstance(operand, str) and len(operand) == 1 and not operand.isdigit():
                 return operand
             if isinstance(operand, str) and operand.strip().lstrip("-").isdigit():
@@ -591,9 +586,8 @@ class Parser:
         args = self._parse_arg_list()
         if args is None:
             return UNKNOWN
-        # Postfix applies to a static call's result too, so
-        # `[Convert]::FromBase64String($b)[0..3]` and `...GetString($b).Trim()`
-        # resolve instead of stopping at the closing paren.
+        # Postfix also applies to a static call's result, so `[Convert]::X($b)[0..3]`
+        # and `...GetString($b).Trim()` resolve instead of stopping at the paren.
         return self._maybe_postfix(handler(name_tok.value.lower(), args))
 
     def _parse_encoding_call(self):
@@ -630,12 +624,12 @@ class Parser:
             return None
         return args
 
-    # -- bare name constructs (New-Object etc. are unsupported) ----------
+    # bare name constructs (New-Object etc. are unsupported)
     def _parse_name_construct(self):
         self.next()
         return UNKNOWN
 
-    # -- .Method(...) and [...] postfix chains ---------------------------
+    # .Method(...) and [...] postfix chains
     def _maybe_postfix(self, value):
         """Apply `.Method(...)` calls and `[...]` indexing, in any order.
 
@@ -723,9 +717,8 @@ class Parser:
         if not isinstance(target, str):
             return UNKNOWN
         try:
-            # String.Replace is an ordinal replace - it is NOT a regex. Only
-            # the -replace OPERATOR is, and conflating the two would silently
-            # reinterpret every '.' in a pattern as "any character".
+            # String.Replace is ordinal, not a regex. Only the -replace operator is, and
+            # conflating them would read every '.' as "any character".
             if method == "replace" and len(args) == 2:
                 return _cap(target.replace(str(args[0]), str(args[1])))
             if method == "split" and len(args) >= 1:
@@ -798,7 +791,7 @@ class Parser:
             return UNKNOWN
         return UNKNOWN
 
-    # -- operators --------------------------------------------------------
+    # operators
     def _apply_arith(self, op, left, right):
         if left is UNKNOWN or right is UNKNOWN:
             return UNKNOWN
@@ -823,9 +816,8 @@ class Parser:
                 if op == "%":
                     if right == 0:
                         return UNKNOWN
-                    # PowerShell's remainder takes the sign of the dividend and
-                    # Python's takes the sign of the divisor, so -7 % 3 would
-                    # otherwise come out 2 where the script computed -1.
+                    # PowerShell's remainder takes the dividend's sign and Python's the divisor's,
+                    # so -7 % 3 would be 2 where the script computed -1.
                     remainder = abs(left) % abs(right)
                     return remainder if left >= 0 else -remainder
         except Exception:
@@ -924,9 +916,8 @@ class Parser:
             # would invent a value it would never have produced.
             return UNKNOWN
         try:
-            # Only a single-quoted replacement carries $1 backreferences; a
-            # double-quoted one had them interpolated by expand_double_quoted
-            # long before -replace saw the string, so this never double-applies.
+            # Only a single-quoted replacement carries $1 backreferences; a double-quoted
+            # one was already interpolated, so this never double-applies.
             return _cap(compiled.sub(_dotnet_replacement(str(new)), target))
         except Exception:
             return UNKNOWN
@@ -969,9 +960,8 @@ class Parser:
             result = _FORMAT_RE.sub(repl, fmt)
         except Exception:
             return UNKNOWN
-        # A placeholder we could not fill means the template is not resolved.
-        # Emitting it with the brace still in would hand the report a value
-        # the script never produced - the corruption this evaluator avoids.
+        # An unfilled placeholder means the template is unresolved. Emitting the brace
+        # would report a value the script never produced.
         if unresolved:
             return UNKNOWN
         return _cap(result)

@@ -42,26 +42,39 @@
 <div class="split">
   <section class="pane">
     <h3>Deobfuscated Script</h3>
-    {% if analysis.pass_log %}
+    {% if transforms %}
     <details class="pass-log-details" open>
-      <summary>{{ analysis.pass_log|length }} deobfuscation transform(s) applied</summary>
+      <summary>{{ transforms|length|plural("deobfuscation transform") }} applied</summary>
       <ul>
-        {% for entry in analysis.pass_log %}<li>{{ entry }}</li>{% endfor %}
+        {% for entry in transforms %}<li>{{ entry }}</li>{% endfor %}
       </ul>
+      {% if run_notes %}
+      <p class="pass-log-notes-label">Notes</p>
+      <ul class="pass-log-notes">
+        {% for entry in run_notes %}<li>{{ entry }}</li>{% endfor %}
+      </ul>
+      {% endif %}
     </details>
-    {% elif analysis.findings %}
-    <p class="muted">No further static rewrites could be safely applied - see Findings for obfuscation techniques detected but not fully resolved automatically.</p>
     {% else %}
-    <p class="muted">No transforms were needed - input already appears to be plaintext.</p>
+    {% if analysis.findings %}
+    <p class="muted">No further static rewrites could be safely applied. Findings lists the obfuscation techniques that were detected but not fully resolved.</p>
+    {% else %}
+    <p class="muted">No transforms were needed; the input already appears to be plaintext.</p>
+    {% endif %}
+    {% if run_notes %}
+    <ul class="pass-log-notes">
+      {% for entry in run_notes %}<li>{{ entry }}</li>{% endfor %}
+    </ul>
+    {% endif %}
     {% endif %}
     <pre class="code-block">{{ analysis.deobfuscated }}</pre>
 
     {% if resolved_display %}
     <details class="pass-log-details" open>
-      <summary>{{ resolved_display|length }} variable value(s) statically resolved</summary>
+      <summary>{{ resolved_display|length|plural("variable value") }} statically resolved</summary>
       <p class="muted" style="font-size:12px;margin:6px 0 0;">
         Reconstructed by folding literals through concatenation, encoding and string
-        operations &mdash; nothing was executed to obtain these. Indicators are defanged.
+        operations. Nothing was executed to obtain these. Indicators are defanged.
       </p>
       <table class="resolved-table">
         <tr><th>Variable</th><th>Resolved value</th></tr>
@@ -80,8 +93,42 @@
     </details>
     {% endif %}
 
+    {% if encoded_runs %}
+    <details class="pass-log-details" id="encodedRuns" open>
+      <summary>{{ encoded_runs|length|plural("encoded run") }} checked against CyberChef's decoders</summary>
+      <p class="muted chef-note">
+        {% if cyberchef %}Open a run in the offline CyberChef to check the recipe or take it further. The data stays on this machine.
+        {% else %}To open these in CyberChef, install the offline copy with <code>python tools/fetch_cyberchef.py</code> and restart.{% endif %}
+      </p>
+      <table class="resolved-table chef-table">
+        <tr><th>Run</th><th>Recipe and result</th>{% if cyberchef %}<th class="chef-col"></th>{% endif %}</tr>
+        {% for row in encoded_runs %}
+        <tr>
+          <td class="varval mono" title="{{ row.length }} characters">{{ row.preview }}</td>
+          <td class="varval">
+            {% if row.label %}<span class="chef-recipe">{{ row.label }}</span>
+            <span class="varval-decoded mono">{{ row.output }}</span>
+            {% else %}<span class="muted">No recipe found. Still encoded, or encrypted with a key the sample does not contain.</span>{% endif %}
+          </td>
+          {% if cyberchef %}
+          <td class="chef-col">
+            <a class="tbtn" href="{{ chef_url(row.run, row.recipe) }}" target="_blank" rel="noopener noreferrer"
+               data-no-busy title="{{ 'Open with this recipe' if row.recipe else 'Open with CyberChef Magic' }}">
+              <i class="bi bi-box-arrow-up-right"></i> CyberChef</a>
+          </td>
+          {% endif %}
+        </tr>
+        {% endfor %}
+      </table>
+    </details>
+    {% endif %}
+
     <details class="original-details">
       <summary>Show original input</summary>
+      {% if cyberchef %}
+      <a class="tbtn chef-original" href="{{ chef_url(analysis.original) }}" target="_blank" rel="noopener noreferrer"
+         data-no-busy title="Open the original input with CyberChef Magic"><i class="bi bi-box-arrow-up-right"></i> Open in CyberChef</a>
+      {% endif %}
       <pre class="code-block">{{ analysis.original }}</pre>
     </details>
   </section>
@@ -98,7 +145,7 @@
       <button class="tbtn tbtn-unknown" data-bulk-status="unreviewed">Reset</button>
     </div>
     <div class="bulk-triage">
-      <span class="bulk-triage-label">{{ analysis.findings|length }} finding(s)</span>
+      <span class="bulk-triage-label">{{ analysis.findings|length|plural("finding") }}</span>
       <button class="tbtn" data-expand-all="1"><i class="bi bi-chevron-expand"></i> Expand all</button>
       <button class="tbtn" data-expand-all="0"><i class="bi bi-chevron-contract"></i> Collapse all</button>
     </div>
@@ -119,7 +166,7 @@
         {% if f.context %}<pre class="code-block code-inline">{{ f.context }}</pre>{% endif %}
 
         {% set shown = f.intel_display %}
-        {% if shown %}
+        {% if shown or f.intel_summary.verdict == "not_applicable" %}
         <details class="intel-block">
           <summary class="intel-summary">
             <span class="intel-badge badge-{{ f.intel_summary.verdict }}">{{ f.intel_summary.text }}</span>

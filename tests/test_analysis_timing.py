@@ -26,7 +26,7 @@ def _conn():
     return PlagStore.get_conn(":memory:")
 
 
-# --- 1. single-file analysis has start/completion/duration -----------------
+# 1. single-file analysis has start/completion/duration
 
 def test_single_analysis_has_started_completed_and_duration():
     conn = _conn()
@@ -63,7 +63,7 @@ def test_high_resolution_timer_distinguishes_close_calls():
     assert isinstance(r2["duration_ms"], float)
 
 
-# --- 2 & 3. batch has start/completion/total duration; files independent ---
+# 2 & 3. batch has start/completion/total duration; files independent
 
 def test_batch_has_started_completed_and_total_duration():
     conn = _conn()
@@ -109,7 +109,7 @@ def test_single_file_upload_does_not_become_a_one_file_batch():
     assert stored["batch"] is None
 
 
-# --- 4 & 5. History: single-file and batch uploads display correctly -------
+# 4 & 5. History: single-file and batch uploads display correctly
 
 def test_single_file_history_entry_has_the_required_fields():
     conn = _conn()
@@ -154,7 +154,7 @@ def test_a_batch_counts_as_one_slot_against_the_history_limit():
     assert len(rows) == 2  # the batch (1 slot) + the standalone analysis
 
 
-# --- 6. individual files within a batch can be inspected -------------------
+# 6. individual files within a batch can be inspected
 
 def test_individual_files_within_a_batch_are_inspectable():
     conn = _conn()
@@ -170,7 +170,7 @@ def test_individual_files_within_a_batch_are_inspectable():
         assert PlagStore.get_analysis(conn, f["id"]) is not None
 
 
-# --- 7. failed files still record a duration --------------------------------
+# 7. failed files still record a duration
 
 def test_failed_file_in_a_batch_still_records_its_duration(monkeypatch):
     conn = _conn()
@@ -196,7 +196,7 @@ def test_failed_file_in_a_batch_still_records_its_duration(monkeypatch):
     assert failed["completed_at"] is not None
 
 
-# --- 8. cancelled batches record status and duration ------------------------
+# 8. cancelled batches record status and duration
 
 def test_a_batch_interrupted_partway_through_is_marked_cancelled(monkeypatch):
     """Not one file failing (that's `failed`, tested above) - something that
@@ -221,7 +221,7 @@ def test_a_batch_interrupted_partway_through_is_marked_cancelled(monkeypatch):
     assert row["total_files"] == 3
 
 
-# --- 9. timing never appears in the PDF report -------------------------------
+# 9. timing never appears in the PDF report
 
 _BANNED_IN_PDF = [
     "Started", "Completed", "Duration", "duration_ms", "started_at",
@@ -284,7 +284,7 @@ def test_timing_fields_do_not_change_the_pdf_structure():
     assert headings(with_timing) == headings(without_timing)
 
 
-# --- 10. duration remains correct under concurrent processing --------------
+# 10. duration remains correct under concurrent processing
 
 def test_concurrent_analyses_get_independent_timing(tmp_path):
     """Each worker gets its own connection to the same file, matching how
@@ -341,11 +341,8 @@ def test_batch_processing_stays_correct_when_run_from_multiple_threads(tmp_path)
     concurrency model.
     """
     db_path = tmp_path / "concurrent.db"
-    # Create the schema up front, synchronously - in the real app it has
-    # existed since long before any concurrent request arrives, so racing
-    # two threads' very first get_conn() (each running CREATE TABLE/ALTER
-    # TABLE on a brand-new file) would test schema-creation concurrency,
-    # a different question this app never actually faces in practice.
+    # Schema created up front: the real app has it long before concurrent
+    # requests arrive, so racing two first get_conn() calls tests the wrong thing.
     PlagStore.get_conn(db_path).close()
     outcomes: dict[str, dict] = {}
 
@@ -373,7 +370,7 @@ def test_batch_processing_stays_correct_when_run_from_multiple_threads(tmp_path)
     assert {f["filename"] for f in alpha_row["files"]} == {"alpha-0.ps1", "alpha-1.ps1", "alpha-2.ps1"}
 
 
-# --- 11. existing analysis/PDF functionality is unaffected -----------------
+# 11. existing analysis/PDF functionality is unaffected
 
 def test_scoring_and_finding_extraction_are_unaffected_by_timing():
     """Same input, timing on or off (there's no "off" switch, but the point

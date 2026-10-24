@@ -10,7 +10,7 @@ from deob_cases import (B64, CODES, DOM, DOM_CHR, DOM_CODES, IP, BANNER,
 from plaguardsv2.GuardModules import PlagEncode
 
 CASES = [
-    # --- VBScript --------------------------------------------------------
+    # VBScript
     ("vbs-chr-concat", f"Dim s\ns = {DOM_CHR}\nWScript.Echo s", DOM),
     ("vbs-strreverse", 'Dim s\ns = StrReverse("dilavni.elpmaxe.suoicilam")\nWScript.Echo s', DOM),
     ("vbs-replace", 'Dim s\ns = Replace("maliciousXexampleXinvalid", "X", ".")\nWScript.Echo s', DOM),
@@ -18,7 +18,7 @@ CASES = [
     ("vbs-variable", 'Dim d\nd = "malicious.example.invalid"\nWScript.Echo d', DOM),
     ("vbs-mixed", 'Dim s\ns = Chr(109) & "alicious" & Chr(46) & "example.invalid"\nWScript.Echo s', DOM),
 
-    # --- JScript ---------------------------------------------------------
+    # JScript
     ("js-charcode", f"var d = String.fromCharCode({DOM_CODES});\nWScript.Echo(d);", DOM),
     ("js-concat", 'var d = "mal" + "icious" + "." + "example" + ".invalid";\nWScript.Echo(d);', DOM),
     ("js-reverse-chain", 'var d = "dilavni.elpmaxe.suoicilam".split("").reverse().join("");\nWScript.Echo(d);', DOM),
@@ -30,14 +30,14 @@ CASES = [
     ("js-base64-literal", f'var d = "{B64}";\nWScript.Echo(d);', DOM),
     ("js-variable", 'var dom = "malicious.example.invalid";\nfunction f(){}\nWScript.Echo(dom);', DOM),
 
-    # --- batch / cmd -----------------------------------------------------
+    # batch / cmd
     ("bat-set-concat", "@echo off\nset a=malicious\nset b=.example\nset c=.invalid\nset d=%a%%b%%c%\necho %d%", DOM),
     ("bat-substring", "@echo off\nset pool=ZZmaliciousZZexampleZZinvalidZZ\nset x=%pool:~2,9%\necho %x%", "malicious"),
     ("bat-replace", "@echo off\nset s=maliciousXexampleXinvalid\nset d=%s:X=.%\necho %d%", DOM),
     ("bat-caret", "@echo off\nset d=malicious.example.invalid\necho C2^=%d% ^| IP^=198.51.100.42", DOM),
     ("cmd-delayed", "@echo off\nsetlocal enabledelayedexpansion\nset d=malicious.example.invalid\necho !d!\nendlocal", DOM),
 
-    # --- data / logs -----------------------------------------------------
+    # data / logs
     ("txt-bare-base64", B64, DOM),
     ("txt-char-codes", CODES, DOM),
     ("log-proxy", f"2026-08-08 09:14:01 10.0.0.5 GET {DOM} /payload.ps1 404 EVILBOT/1.0", DOM),

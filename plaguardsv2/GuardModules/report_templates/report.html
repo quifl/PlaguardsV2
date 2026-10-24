@@ -2,12 +2,8 @@
 <head>
 <meta charset="utf-8" />
 <style>
-  /* Front matter (cover, contents, disclaimer) is unnumbered and the body
-     restarts at page 1. xhtml2pdf cannot offset <pdf:pagenumber>, so the two
-     halves are rendered as separate documents (`part` = front / body) and
-     stitched together afterwards; each then counts its own pages. Rendering
-     with no `part` at all still produces the whole report in one pass, with
-     the body on the `numbered` page template. */
+  /* Front matter is unnumbered and the body restarts at page 1: xhtml2pdf can't
+     offset <pdf:pagenumber>, so `part` renders each half apart. None: one pass. */
   {% set part = part | default("all") %}
   @page {
     size: A4;
@@ -76,14 +72,11 @@
     white-space: pre-wrap;
   }
 
-  /* ---------- cover ----------
-     Built as a single table cell holding only inline content. xhtml2pdf
-     propagates a container block's box properties (padding, borders) onto
-     each child block, so a padded <div> full of <div>s renders one child
-     per page. One cell + <br/> keeps the cover to exactly one page. */
-  /* One cell, inline content only. xhtml2pdf gives each child *block* of a
-     padded/bordered container its own box (and here, its own page), so the
-     cover must not contain nested tables or divs. */
+  {#- Front matter rules are left out of the body render: every rule is matched
+      against every element, and these can never match there. -#}
+  {% if part != "body" %}
+  /* Cover: one cell, inline content only. xhtml2pdf gives each child block of a
+     padded container its own box, and here its own page. */
   table.cover-t { width: 100%; border-collapse: collapse; page-break-after: always; }
   td.cover-c {
     background-color: #ffffff;
@@ -113,13 +106,14 @@
   table.cover-info td.cn .cl {
     display: block; font-size: 11pt; font-weight: normal; color: #000000;
   }
+  {% endif %}
 
-  /* ---------- meta ---------- */
+  /* meta */
   table.meta { width: 100%; border-collapse: collapse; margin-bottom: 6px; }
   table.meta td { border: 1px solid #d3dae4; padding: 4px 7px; font-size: 8.6pt; }
   table.meta td.k { background-color: #eff2f7; color: #000000; width: 21%; font-weight: bold; }
 
-  /* ---------- summary ---------- */
+  /* summary */
   table.summary { width: 100%; border-collapse: collapse; margin: 6px 0; }
   table.summary td {
     border: 1px solid #d3dae4; text-align: center;
@@ -143,7 +137,7 @@
   table.charts td { text-align: center; vertical-align: top; padding: 2px; }
   table.charts img { max-width: 100%; }
 
-  /* ---------- findings overview ---------- */
+  /* findings overview */
   table.grid { width: 100%; border-collapse: collapse; margin-top: 4px; }
   table.grid th {
     background-color: #0d1a2b; color: #ffffff; text-align: left;
@@ -178,16 +172,15 @@
     padding: 7px 11px; margin: 18px 0 8px 0; font-size: 10.5pt; font-weight: bold;
     color: #000000; border-left: 6px solid #8a94a6;
   }
-  /* xhtml2pdf does not collapse or honour margins between sibling blocks
-     reliably, so the breathing space before each severity band is an explicit
-     spacer rather than a margin. */
+  /* xhtml2pdf does not reliably honour margins between sibling blocks, so the
+     space before each severity band is an explicit spacer. */
   .group-gap { font-size: 11pt; line-height: 2.2; }
   .group-high   { background-color: #f6dbe0; border-left-color: #a81f36; }
   .group-medium { background-color: #fbeed3; border-left-color: #9a6207; }
   .group-low    { background-color: #d9efe2; border-left-color: #1c6b3f; }
   .group-info   { background-color: #e6e9f0; border-left-color: #5c6883; }
 
-  /* ---------- contents / disclaimer ---------- */
+  {% if part != "body" %}
   /* Contents: chapters flush left in bold, their sections stepped in under
      them, page numbers in a right-aligned column. */
   table.toc { width: 100%; border-collapse: collapse; margin-top: 12px; }
@@ -204,10 +197,8 @@
   table.toc tr.lvl2 td.tt { padding-left: 26px; }
   table.toc tr.lvl2 td.tp { color: #55627a; }
   a.toc-link { color: #000000; text-decoration: none; }
-  /* ---------- disclaimer notice ----------
-     A bordered instrument, so the page reads as a formal warning rather than
-     six loose paragraphs. Built from tables: xhtml2pdf gives each child block
-     of a padded container its own box, so nested divs would fragment it. */
+  /* Disclaimer notice: built from tables, since xhtml2pdf gives each child
+     block of a padded container its own box and nested divs fragment it. */
   table.notice { width: 100%; border-collapse: collapse; margin-top: 14px; }
   td.notice-c {
     border: 2.5px solid #c81e4a;
@@ -243,10 +234,11 @@
     color: #46536a;
     padding: 14px 26px 0 26px;
   }
+  {% endif %}
 
   .sub { display: block; font-size: 7.2pt; color: #46536a; font-weight: normal; }
 
-  /* ---------- per-finding detail ---------- */
+  /* per-finding detail */
   table.detail {
     width: 100%; border-collapse: collapse; margin-bottom: 9px;
     page-break-inside: avoid;
@@ -261,7 +253,7 @@
   }
   table.detail tr.head td .idx { color: #9fb0c9; }
 
-  /* ---------- code ---------- */
+  /* code */
   .code {
     background-color: #f6f8fb; border: 1px solid #d3dae4; padding: 9px 11px;
     font-family: Courier, monospace; font-size: 7.6pt; color: #000000;
@@ -335,18 +327,16 @@
   {% endfor %}
 </table>
 
-{#- The link targets have to exist in whichever document holds the contents,
-    or the renderer drops the annotation entirely. PlagReport repoints them at
-    the real body pages once the two halves are merged. -#}
+{#- Link targets must exist in the document holding the contents or the
+    renderer drops them; PlagReport repoints them after the merge. -#}
 {% for entry in toc %}<a name="{{ entry.anchor }}"></a>{% endfor %}
 
 <h1 class="pb">Disclaimer &amp; scope</h1>
 
-{# A formal notice rather than loose prose: a bordered instrument with a
-   banner, numbered clauses and an acknowledgement line, laid over the
-   watermark that every page carries. #}
+{# A formal notice rather than loose prose: a bordered block with a banner
+   and numbered clauses, laid over the page watermark. #}
 <table class="notice"><tr><td class="notice-c">
-  <span class="notice-band">IMPORTANT &mdash; READ BEFORE RELYING ON THIS DOCUMENT</span>
+  <span class="notice-band">IMPORTANT: READ BEFORE RELYING ON THIS DOCUMENT</span>
 
   <table class="dclauses">
     <tr>
@@ -443,7 +433,7 @@
     <td class="mono">{% if redact_iocs %}<span class="redacted">{% for part in f.display_value_parts %}{{ part }}{% if not loop.last %}<br/>{% endif %}{% endfor %}</span>{% else %}{% for part in f.display_value_parts %}{{ part }}{% if not loop.last %}<br/>{% endif %}{% endfor %}{% endif %}</td>
     <td class="c-{{ f.intel_summary.verdict }}">
       {{ f.intel_summary.text }}
-      {% if f.intel_summary.note %}<span class="sub">{{ f.intel_summary.note }}</span>{% endif %}
+      {% if f.intel_summary.note and f.intel_summary.verdict != "not_applicable" %}<span class="sub">{{ f.intel_summary.note }}</span>{% endif %}
     </td>
     <td class="c-{{ f.triage_status }}">{{ f.verdict_label }}</td>
   </tr>
@@ -468,11 +458,11 @@
 <h2 class="pb">Finding details</h2>
 {% for group in grouped_findings %}
 {% if not loop.first %}<div class="group-gap">&nbsp;</div>{% endif %}
-<div class="group-head group-{{ group.severity }}">{{ group.label }} severity &mdash; {{ group.entries|length }} finding(s)</div>
+<div class="group-head group-{{ group.severity }}">{{ group.label }} severity: {{ group.entries|length }} finding(s)</div>
 {% for f in group.entries %}
 <table class="detail">
   <tr class="head">
-    <td colspan="2" class="mono"><span class="idx">#{{ f.n }}</span> &nbsp; {{ f.type_label }} &mdash;
+    <td colspan="2" class="mono"><span class="idx">#{{ f.n }}</span> &nbsp; {{ f.type_label }}:
       {% if redact_iocs %}<span class="redacted">{% for part in f.display_value_parts %}{{ part }}{% if not loop.last %}<br/>{% endif %}{% endfor %}</span>{% else %}{% for part in f.display_value_parts %}{{ part }}{% if not loop.last %}<br/>{% endif %}{% endfor %}{% endif %}</td>
   </tr>
   <tr>
@@ -498,7 +488,7 @@
        empty ones down the left. #}
     {% if loop.first %}<td class="dk" rowspan="{{ f.intel_display|length }}">Threat intel</td>{% endif %}
     <td class="c-{{ r.verdict }}">
-      <b>{{ r.label }}</b> &mdash; {{ r.verdict.replace("_", " ") }}
+      <b>{{ r.label }}</b>: {{ r.verdict.replace("_", " ") }}
       {% if r.detail %}<span class="sub">{{ r.detail }}</span>{% endif %}
     </td>
   </tr>
@@ -512,7 +502,9 @@
     </td>
   </tr>
   {% endif %}
-  {% if f.scope_note %}
+  {# Only when a provider answered: otherwise the branch above already prints
+     this sentence as the summary's note. #}
+  {% if f.scope_note and f.intel_display %}
   <tr>
     <td class="dk">Note</td>
     <td>{{ f.scope_note }}</td>
@@ -522,7 +514,7 @@
   {% for row in f.geo_rows %}
   <tr>
     {% if loop.first %}<td class="dk" rowspan="{{ f.geo_rows|length }}">Geolocation</td>{% endif %}
-    <td><b>{{ row.label }}</b> &mdash; {{ row.value }}</td>
+    <td><b>{{ row.label }}</b>: {{ row.value }}</td>
   </tr>
   {% endfor %}
   {% endif %}
@@ -548,15 +540,14 @@
   {% endfor %}
 </table>
 {% elif analysis.findings %}
-<p>No further static rewrites could be safely applied &mdash; see the findings above for
+<p>No further static rewrites could be safely applied. See the findings above for
 obfuscation techniques that were detected but could not be fully resolved automatically.</p>
 {% else %}
-<p>No deobfuscation transforms were needed &mdash; the input appears to already be plaintext.</p>
+<p>No deobfuscation transforms were needed: the input appears to already be plaintext.</p>
 {% endif %}
 
-{# Statements about the analysis itself rather than decodes that happened -
-   that the fixed point was not reached, or that opaque runs remain. Kept out
-   of the transform count so a caveat is never read as a transform. #}
+{# Statements about the analysis, not decodes, such as an unreached fixed
+   point. Kept out of the transform count so a caveat never reads as one. #}
 {% if analysis_notes %}
 <h3>Analysis notes</h3>
 <table class="grid">
@@ -584,12 +575,12 @@ obfuscation techniques that were detected but could not be fully resolved automa
 </table>
 {% endif %}
 
-<h2 class="pb">Appendix A &mdash; Deobfuscated script</h2>
-<div class="subtitle">Transforms applied, the input's own line structure left intact &mdash;
+<h2 class="pb">Appendix A: Deobfuscated script</h2>
+<div class="subtitle">Transforms applied, the input's own line structure left intact.
 line up against Appendix B to see exactly what changed.</div>
 <div class="code">{% for line in deobfuscated_raw_lines %}{{ line.text }}<br/>{% endfor %}</div>
 
-<h2>Appendix B &mdash; Original input</h2>
+<h2>Appendix B: Original input</h2>
 <div class="code">{% for line in original_lines %}{{ line.text }}<br/>{% endfor %}</div>
 {% endif %}
 

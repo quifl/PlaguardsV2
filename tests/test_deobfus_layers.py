@@ -52,7 +52,7 @@ def _opaque_stage_b64() -> str:
     return base64.b64encode(bytes(b | 0x80 for b in digest)).decode()
 
 
-# --- B1: nested Base64 must not be destroyed ------------------------------
+# B1: nested Base64 must not be destroyed
 
 def test_nested_base64_recovers_marker_at_every_depth():
     for depth in range(1, 6):
@@ -100,7 +100,7 @@ def test_pass_log_does_not_claim_a_decode_that_did_not_happen():
     assert _opaque_stage_b64() in result.deobfuscated
 
 
-# --- B2: converged vs. gave up --------------------------------------------
+# B2: converged vs. gave up
 
 def test_clean_script_converges():
     result = PlagDeobfus.run(f'Write-Host "{MARKER_DOMAIN}"\nWrite-Host "done"')
@@ -115,16 +115,15 @@ def test_nested_payload_converges_well_inside_the_pass_budget():
 
 
 def test_exhausting_the_pass_budget_is_reported_as_not_converged(monkeypatch):
-    # Squeezing the budget to a single round is the only deterministic way to
-    # reach this path: on real input the loop stops because no pass can make
-    # further progress, never because it runs out of iterations.
+    # A one-round budget is the only deterministic way here: on real input the
+    # loop stops when no pass makes progress, never by running out of rounds.
     monkeypatch.setattr(PlagDeobfus, "MAX_PASSES", 1)
     result = PlagDeobfus.run("$x = " + _nest(MARKER_SCRIPT, 2))
     assert result.converged is False
     assert any("Fixed point not reached" in entry for entry in result.pass_log)
 
 
-# --- B3: residual high-entropy blobs --------------------------------------
+# B3: residual high-entropy blobs
 
 def test_clean_script_reports_no_residual_blobs():
     source = (
@@ -158,7 +157,7 @@ def test_a_recovered_payload_leaves_no_residual_blob_behind():
     assert result.residual_blobs == []
 
 
-# --- B4: assumed $env: defaults -------------------------------------------
+# B4: assumed $env: defaults
 
 def test_env_comspec_resolves_and_the_log_marks_it_assumed():
     result = PlagDeobfus.run("$c = $env:ComSpec\nWrite-Host $c")
@@ -188,7 +187,7 @@ def test_an_env_assignment_target_is_not_rewritten_into_a_literal():
     assert "$env:TEMP =" in result.deobfuscated
 
 
-# --- B5: structured transform provenance ----------------------------------
+# B5: structured transform provenance
 
 def test_transforms_record_previews_and_flag_assumed_values():
     result = PlagDeobfus.run("$c = $env:ComSpec\nWrite-Host $c")

@@ -27,10 +27,8 @@ from corpus import generator as gen
 from corpus import metrics as met
 from corpus.harness import run_engine as _engine
 
-# Ratchets. Raise them when a change genuinely improves the engine; never
-# lower them to make a failing build green. Measured at 100% on both splits
-# when these were set, so the 0.95 floor leaves room for a corpus that grows
-# harder without turning every addition into a build break.
+# Ratchets: raise them when the engine genuinely improves, never lower them to
+# go green. The 0.95 floor leaves room for a corpus that grows harder.
 MIN_SAMPLE_COMPLETENESS = 0.95
 MAX_FALSE_INDICATORS = 0
 

@@ -14,6 +14,12 @@
 
 * { box-sizing: border-box; }
 
+/* Smooth jumps show which way the page moved. Off under reduced motion. */
+html { scroll-behavior: smooth; }
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+}
+
 body {
   margin: 0;
   background: var(--bg);
@@ -25,7 +31,7 @@ body {
 
 h1, h2, h3, .sitename { font-family: "Raleway", sans-serif; }
 
-/* --- Sidebar --- */
+/* Sidebar */
 .sidebar {
   position: fixed;
   top: 0;
@@ -128,8 +134,15 @@ h1, h2, h3, .sitename { font-family: "Raleway", sans-serif; }
   .content { margin-left: 0 !important; }
 }
 
-/* --- Content --- */
+/* Content */
 .content { margin-left: 260px; padding: 32px 40px 36px; max-width: 1900px; }
+/* Clear the fixed menu button, which otherwise sits on the page title. */
+@media (max-width: 1199px) {
+  .content { padding-top: 70px; }
+}
+@media (max-width: 600px) {
+  .content { padding: 70px 16px 28px; }
+}
 
 .section-title h2 {
   font-size: 21px;
@@ -169,9 +182,8 @@ textarea {
 
 .analyze-form { margin-top: 16px; }
 
-/* Bootstrap Icons set `vertical-align: -.125em` on their ::before glyph, which
-   drops the icon below the text it sits beside in every flex row on the page.
-   Reset it once, centrally, rather than nudging each button by hand. */
+/* Bootstrap Icons' ::before carries vertical-align: -.125em, which sinks every
+   icon below its text in a flex row. Reset once here. */
 .bi {
   display: inline-flex;
   align-items: center;
@@ -232,6 +244,8 @@ textarea {
 .pass-log-details, .original-details { margin: 10px 0; color: var(--muted); font-size: 13px; }
 .pass-log-details summary, .original-details summary { cursor: pointer; color: var(--accent); }
 .pass-log-details ul { margin: 8px 0 0 18px; padding: 0; }
+.pass-log-notes-label { margin: 10px 0 0; font-weight: 600; color: var(--text); font-size: 12.5px; }
+.pass-log-notes { margin: 6px 0 0 18px; padding: 0; color: var(--muted); font-size: 12.5px; }
 
 .finding-card {
   background: var(--panel);
@@ -350,11 +364,22 @@ textarea {
 .tbtn-fp.active { background: var(--low); color: #06180e; border-color: var(--low); }
 .tbtn-unknown.active { background: var(--info); color: #10131b; border-color: var(--info); }
 
-/* --- Custom checkbox --------------------------------------------------
-   The native control renders as a bright white square against the dark
-   theme, so it is hidden and replaced with a styled box. */
+/* Custom checkbox: the native control is a bright white square on the dark
+   theme, so it is hidden and replaced. */
 .check { display: inline-flex; align-items: center; gap: 9px; cursor: pointer; user-select: none; }
-.check input[type=checkbox] { position: absolute; opacity: 0; width: 0; height: 0; }
+/* Fully clipped, not just zero-sized: width/height:0 still lets some
+   browsers paint a sliver of the native control at its minimum hit size. */
+.check input[type=checkbox] {
+  position: absolute;
+  width: 1px; height: 1px;
+  margin: -1px; padding: 0; border: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  opacity: 0;
+  appearance: none; -webkit-appearance: none;
+}
 .check .check-box {
   width: 18px; height: 18px; flex: 0 0 18px;
   border: 1.5px solid var(--border);
@@ -378,7 +403,7 @@ textarea {
 .check .check-label { font-size: 13px; color: var(--muted); }
 .check:hover .check-label { color: var(--text); }
 
-/* --- Custom file picker --- */
+/* Custom file picker */
 .file-picker { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .file-picker input[type=file] { position: absolute; opacity: 0; width: 0; height: 0; }
 .file-picker .file-btn {
@@ -395,9 +420,8 @@ textarea {
 .file-picker .file-btn:hover { border-color: var(--accent); background: var(--panel); }
 .file-picker .file-name { font-size: 12.5px; color: var(--muted); }
 
-/* Drop target for dragged files. The whole box is live, not just the button. */
-/* Full width under the paste box. It keeps the roomy centred look but stays
-   short enough that Analyze is still above the fold. */
+/* The whole box is a drop target, not just the button. Short enough that
+   Analyze stays above the fold. */
 .drop-zone {
   display: flex;
   flex-direction: column;
@@ -426,9 +450,8 @@ textarea {
 /* Files can be dropped anywhere, so the page as a whole acknowledges the drag. */
 body.drop-active { outline: 2px dashed var(--accent); outline-offset: -6px; }
 
-/* --- Batch report choice ---
-   Two mutually exclusive buttons rather than a radio list: the choice is
-   always on screen, and which one is active has to be readable at a glance. */
+/* Batch report choice: two buttons rather than radios, so the choice is
+   always on screen and the active one is readable at a glance. */
 .batch-choice {
   border: 1px solid var(--border);
   border-radius: 10px;
@@ -473,14 +496,14 @@ body.drop-active { outline: 2px dashed var(--accent); outline-offset: -6px; }
 .batch-note { font-size: 11.5px; color: var(--muted); margin: 7px 0 0; }
 .batch-note.is-active { color: var(--text); }
 
-/* --- Inline links --- */
-.content a:not(.btn):not(.docs-link):not(.file-btn) {
+/* Inline links */
+.content a:not(.btn):not(.docs-link):not(.file-btn):not(.toc-link):not(.toc-back) {
   color: var(--accent);
   text-decoration: none;
   border-bottom: 1px solid rgba(200, 30, 74, 0.4);
   transition: border-color 0.15s ease, color 0.15s ease;
 }
-.content a:not(.btn):not(.docs-link):not(.file-btn):hover {
+.content a:not(.btn):not(.docs-link):not(.file-btn):not(.toc-link):not(.toc-back):hover {
   color: #e85f81;
   border-bottom-color: #e85f81;
 }
@@ -497,10 +520,8 @@ body.drop-active { outline: 2px dashed var(--accent); outline-offset: -6px; }
 }
 .link-chip:hover { background: rgba(200, 30, 74, 0.26); color: #f07d99 !important; }
 
-/* --- Pocolo guided tour ------------------------------------------------
-   The overlay is a single element; the "hole" is a transparent box with a
-   very large box-shadow, which dims everything except the spotlit feature
-   without needing an SVG mask. */
+/* Pocolo guided tour. The "hole" is a transparent box with a huge box-shadow,
+   which dims everything else without an SVG mask. */
 .tour-overlay { position: fixed; inset: 0; z-index: 999; display: none; }
 .tour-overlay.open { display: block; }
 body.tour-active { overflow: hidden; }
@@ -532,6 +553,17 @@ body.tour-active { overflow: hidden; }
 }
 .tour-title { font-family: "Raleway", sans-serif; font-weight: 700; font-size: 15px; color: var(--text); }
 .tour-count { font-size: 11.5px; color: var(--muted); }
+/* The count says where you are; the bar says how much is left, without
+   making the reader do the arithmetic mid-tour. */
+.tour-progress {
+  margin-top: 6px; width: 150px; height: 3px;
+  background: var(--border); border-radius: 2px; overflow: hidden;
+}
+.tour-progress-fill {
+  display: block; height: 100%; width: 0;
+  background: var(--accent); border-radius: 2px;
+  transition: width 0.25s ease;
+}
 .tour-body { font-size: 13px; color: var(--text); line-height: 1.55; margin: 0 0 14px; }
 
 .tour-actions { display: flex; align-items: center; gap: 8px; }
@@ -545,7 +577,7 @@ body.tour-active { overflow: hidden; }
 .tour-next { background: var(--accent) !important; border-color: var(--accent) !important; color: #fff !important; font-weight: 600; }
 .tour-skip { color: var(--muted) !important; background: transparent !important; border-color: transparent !important; }
 
-/* --- Bulk triage --- */
+/* Bulk triage */
 .bulk-triage {
   display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
   background: var(--panel);
@@ -556,7 +588,7 @@ body.tour-active { overflow: hidden; }
 }
 .bulk-triage-label { font-size: 12.5px; color: var(--muted); margin-right: auto; }
 
-/* --- Resolved variables panel --- */
+/* Resolved variables panel */
 .resolved-table { width: 100%; border-collapse: collapse; margin-top: 8px; table-layout: fixed; }
 .resolved-table th, .resolved-table td {
   text-align: left; padding: 6px 10px; font-size: 12.5px;
@@ -571,10 +603,15 @@ body.tour-active { overflow: hidden; }
 }
 .resolved-table td.varval { overflow-wrap: anywhere; word-break: break-word; }
 
-/* --- Global wrapping safety net ------------------------------------------
-   Grid/flex children default to min-width:auto, which lets a long
-   unbreakable token (base64 blob, one-line script) push the layout wider
-   than the viewport. */
+/* Encoded runs and their CyberChef recipes on the analysis page. */
+.chef-note { font-size: 12px; margin: 6px 0 0; }
+.chef-table td:first-child { width: 38%; }
+.chef-table .chef-col { width: 118px; text-align: right; }
+.chef-recipe { color: var(--accent); font-weight: 600; font-size: 12px; }
+.chef-original { margin: 8px 0 4px; }
+
+/* Global wrapping safety net: grid and flex children default to min-width:auto,
+   so one long unbreakable token could push the layout past the viewport. */
 .split, .pane, .tool-grid, .tool-card, .finding-card, .finding-body,
 .finding-summary, .content { min-width: 0; }
 .finding-desc, .intel-detail, .intel-row, .lede, .muted,
@@ -585,28 +622,73 @@ body.tour-active { overflow: hidden; }
 .intel-row { min-width: 0; }
 pre, code { max-width: 100%; }
 
-.history-table { width: 100%; border-collapse: collapse; margin-top: 16px; }
-.history-table th, .history-table td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); font-size: 13px; }
+/* table-layout: fixed takes widths from the <colgroup>, so child rows align
+   exactly with the batch row. File has no width set and absorbs the rest. */
+.history-table { width: 100%; border-collapse: collapse; margin-top: 16px; table-layout: fixed; }
+.table-scroll { overflow-x: auto; max-width: 100%; }
+/* Below this the fixed columns leave the File column no room, so the table keeps
+   a working width and scrolls inside .table-scroll. */
+@media (max-width: 1100px) {
+  .history-table { min-width: 980px; }
+}
+.history-table th, .history-table td {
+  text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border);
+  font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .history-table th { color: var(--muted); font-weight: 600; }
 .history-table a { color: var(--accent); text-decoration: none; }
+.history-table .col-id { width: 52px; }
+.history-table .col-completed { width: 168px; }
+.history-table .col-duration { width: 78px; }
+.history-table .col-status { width: 108px; }
+.history-table .col-findings { width: 72px; }
+.history-table .col-high { width: 118px; }
+.history-table .col-action { width: 120px; }
 
-/* A batch row's summary lives in the File cell - expanding it reveals the
-   per-file breakdown without disturbing the surrounding row's own columns
-   (Completed/Duration/Status/... still show the batch-level totals). */
-.batch-row td { vertical-align: top; }
-.batch-details summary { cursor: pointer; color: var(--text); list-style: none; }
-.batch-details summary::-webkit-details-marker { display: none; }
-.batch-details summary::before { content: "\25B8"; display: inline-block; margin-right: 5px; color: var(--muted); transition: transform 0.15s ease; }
-.batch-details[open] summary::before { transform: rotate(90deg); }
-.batch-details summary .muted { display: block; font-size: 12px; margin: 2px 0 0 17px; }
-.batch-file-list { list-style: none; margin: 8px 0 2px 17px; padding: 0; border-left: 2px solid var(--border); }
-.batch-file-list li {
-  display: flex; align-items: center; gap: 9px; flex-wrap: wrap;
-  padding: 6px 0 6px 12px; font-size: 12.5px; border-bottom: 1px dashed var(--border);
+/* Batch rows: a real <tr> per file rather than a layout nested in the File
+   cell, so the columns genuinely align (see history.html). */
+.batch-toggle {
+  display: flex; align-items: baseline; gap: 7px; width: 100%; min-width: 0;
+  background: none; border: none; padding: 0; margin: 0; cursor: pointer;
+  font: inherit; color: var(--text); text-align: left;
 }
-.batch-file-list li:last-child { border-bottom: none; }
-.bf-name { min-width: 140px; }
-.bf-meta { color: var(--muted); min-width: 60px; }
+.batch-chevron { transition: transform 0.15s ease; color: var(--muted); flex: none; }
+.batch-toggle[aria-expanded="true"] .batch-chevron { transform: rotate(90deg); }
+.batch-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.batch-sub { flex: none; font-size: 12px; }
+.batch-row:hover .batch-toggle { color: var(--text); }
+
+.batch-child-row { background: var(--panel-alt); }
+.batch-child-row:hover { background: rgba(255, 255, 255, 0.03); }
+.batch-child-row td { border-bottom: 1px dashed var(--border); }
+/* A file row's checkbox takes the ID column's slot (child rows show no ID),
+   so it reads as part of that row. .checkbox-cell alignment is set further down. */
+.batch-child-row td.child-check-cell { text-align: center; vertical-align: middle; overflow: visible; }
+/* The guide line is drawn per row, so hiding one leaves no broken line. */
+.child-file { position: relative; padding-left: 30px !important; }
+.child-file::before {
+  content: ""; position: absolute; left: 14px; top: 0; bottom: 0;
+  width: 1px; background: var(--border);
+}
+.child-name { color: var(--text); }
+
+/* One look for every History action link, Combined and View alike. */
+.history-action {
+  display: inline-flex; align-items: center; gap: 5px;
+  background: rgba(255, 23, 68, 0.1);
+  border: 1px solid #ff1744;
+  border-radius: 6px;
+  padding: 3px 10px;
+  font-size: 12.5px;
+  color: #ff1744 !important;
+  text-decoration: none;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+.history-action:hover {
+  background: rgba(255, 23, 68, 0.2);
+  color: #ff5c82 !important;
+  border-color: #ff5c82;
+}
 
 .status-completed { background: rgba(63,192,122,0.18); color: var(--low); }
 .status-failed { background: rgba(229,86,107,0.18); color: var(--high); }
@@ -617,7 +699,7 @@ pre, code { max-width: 100%; }
    up on the same left edge. */
 .settings-row {
   display: grid;
-  grid-template-columns: 230px minmax(0, 1fr) 130px 110px;
+  grid-template-columns: 230px minmax(0, 1fr) 170px 130px;
   align-items: center;
   gap: 14px;
   margin-bottom: 12px;
@@ -633,9 +715,8 @@ pre, code { max-width: 100%; }
   width: 100%;
 }
 
-/* A number input's native spinner is the browser's own square white arrows -
-   unstyleable and jarring against a dark theme. Hidden here in favour of a
-   pair of custom buttons drawn on top of the field instead. */
+/* The native number spinner is unstyleable white arrows, so it is hidden
+   behind custom buttons. */
 .number-field { position: relative; display: flex; }
 .number-field input[type="number"] { padding-right: 32px; }
 .number-field input[type="number"]::-webkit-inner-spin-button,
@@ -693,19 +774,26 @@ pre, code { max-width: 100%; }
 .key-state { font-size: 12px; display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; line-height: 1.2; }
 .key-state.ok { color: var(--low); }
 .key-state.off { color: var(--high); }
+.key-remove {
+  margin-left: 4px; padding: 1px 7px; border-radius: 6px; font-size: 11px;
+  background: transparent; color: var(--muted); border: 1px solid var(--border);
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+.key-remove:hover { color: var(--high); border-color: var(--high); }
+.field-hint .key-state { display: flex; margin-bottom: 2px; }
+.geo-hint { display: block; }
 
 .docs-link { display: inline-flex; align-items: center; gap: 4px; color: var(--muted); font-size: 12px; text-decoration: none; white-space: nowrap; }
 .docs-link:hover { color: var(--accent); }
-/* A plain description, unlike .docs-link's anchors, has no fixed phrase to
-   protect from wrapping - letting it wrap keeps it from running into
-   whatever sits in the next column over. */
+/* A plain description has no fixed phrase to protect, so it wraps rather
+   than running into the next column. */
 .field-hint { color: var(--muted); font-size: 12px; line-height: 1.35; }
 @media (max-width: 900px) {
   .settings-row { grid-template-columns: 1fr; }
 }
 
 
-/* --- Pocolo tip --- */
+/* Pocolo tip */
 .pocolo-tip {
   display: flex;
   align-items: flex-start;
@@ -723,9 +811,8 @@ pre, code { max-width: 100%; }
    speech bubble. */
 .pocolo-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
 
-/* --- Tool cards (New Analysis page) ---
-   The lookup is a one-field side errand, so it takes the narrower column -
-   but both cards run to the same height so the row reads as one block. */
+/* Tool cards: the lookup takes the narrower column, but both cards share a
+   height so the row reads as one block. */
 .tool-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr);
@@ -821,9 +908,10 @@ pre, code { max-width: 100%; }
 .row-out { margin-left: auto; align-self: center; font-size: 11px; color: var(--muted); opacity: 0.7; }
 .is-link:hover .row-out { color: var(--accent); opacity: 1; }
 
-/* --- History bulk actions --- */
+/* History bulk actions */
 .bulk-bar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 12px;
   background: var(--panel);
@@ -833,9 +921,18 @@ pre, code { max-width: 100%; }
   margin-bottom: 12px;
 }
 .bulk-bar .count { color: var(--muted); font-size: 13px; margin-right: auto; }
-.history-table td.checkbox-cell, .history-table th.checkbox-cell { width: 30px; }
+/* Wide enough for the 18px checkbox and its padding: any narrower and the
+   cell's own overflow:hidden clips it to a sliver. */
+.history-table td.checkbox-cell, .history-table th.checkbox-cell {
+  width: 44px;
+  overflow: visible;
+  text-align: right;
+  vertical-align: middle;
+  padding-left: 4px;
+  padding-right: 14px;
+}
 
-/* --- Settings sections --- */
+/* Settings sections */
 .settings-section { margin-top: 30px; }
 .settings-section h3 { margin-bottom: 4px; }
 .settings-section .lede { margin-top: 4px; margin-bottom: 10px; font-size: 12.5px; }
@@ -853,7 +950,7 @@ pre, code { max-width: 100%; }
 .btn-danger { background: #b2273c; color: #fff; }
 .btn-danger:hover { background: #8f1e30; }
 
-/* --- Tutorial page --- */
+/* Tutorial page */
 .tutorial-card {
   background: var(--panel);
   border: 1px solid var(--border);
@@ -881,9 +978,144 @@ pre, code { max-width: 100%; }
 .tutorial-card .why strong { color: var(--text); }
 .tutorial-card .mono { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 13px; }
 
-/* --- Busy overlay -------------------------------------------------------
-   Analysis and report rendering are synchronous and can take a few seconds
-   on a large batch, so the page says so instead of appearing frozen. */
+/* Tutorial contents: grouped, since eleven flat entries wrap into a ragged
+   last row and say nothing about how they relate. */
+.tutorial-toc { padding-bottom: 20px; }
+.toc-groups {
+  display: grid;
+  /* Three columns or one, never two: groups of 2, 5 and 4 leave a hole in a
+     two-column layout. */
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px 26px;
+  margin-top: 14px;
+  align-items: start;
+}
+@media (max-width: 1150px) {
+  .toc-groups { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+  .toc-group + .toc-group { margin-top: 12px; }
+}
+.toc-group h4 {
+  margin: 0 0 6px;
+  padding: 0 0 7px 10px;
+  border-bottom: 1px solid var(--border);
+  font-family: "Raleway", sans-serif;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--muted);
+}
+.toc-group ul { list-style: none; margin: 0; padding: 0; }
+.toc-group li { margin: 0; }
+
+.toc-link {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  color: var(--muted);
+  text-decoration: none;
+  font-size: 13.5px;
+  line-height: 1.35;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.toc-link i {
+  flex: none;
+  width: 16px;
+  font-size: 14px;
+  /* --border is a divider colour; against the panel it reads as a smudge
+     rather than an icon. */
+  color: var(--muted);
+  opacity: 0.75;
+  transition: color 0.15s ease, opacity 0.15s ease;
+}
+.toc-link:hover { background: var(--panel-alt); color: var(--text); }
+.toc-link:hover i { color: var(--accent); opacity: 1; }
+.toc-link:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* Anchors land a little below the top edge rather than flush against it. */
+.tutorial-card[id], .tutorial-toc[id] { scroll-margin-top: 16px; }
+
+/* Quiet until wanted: one per section, and eleven loud ones would compete
+   with the content they sit under. */
+.toc-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-top: 14px;
+  padding: 4px 11px 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 12px;
+  color: var(--muted);
+  text-decoration: none;
+  transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
+}
+.toc-back:hover {
+  background: var(--panel-alt);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* Tutorial two-column sections: the screenshot stays beside its explanation
+   instead of scrolling away from it. */
+.card-split {
+  display: grid;
+  grid-template-columns: minmax(0, 0.95fr) minmax(0, 1fr);
+  gap: 22px 26px;
+  align-items: start;
+  margin-top: 12px;
+}
+.card-figure { position: sticky; top: 16px; min-width: 0; }
+.card-body { min-width: 0; }
+.card-body > :first-child { margin-top: 0; }
+
+/* One column below the point where two would squeeze both the screenshot
+   and the prose too narrow to be worth reading. */
+@media (max-width: 1150px) {
+  .card-split { grid-template-columns: minmax(0, 1fr); gap: 14px; }
+  .card-figure { position: static; }
+}
+
+/* Tutorial figures
+   Each one doubles as the entry point to that section's tour. */
+.tut-figure { margin: 16px 0 4px; }
+.tut-figure a,
+.tut-figure .frame {
+  /* Shrink-wrap the picture: a full-width frame around a portrait screenshot
+     leaves a bordered void either side of it. */
+  display: block;
+  width: fit-content;
+  max-width: 100%;
+  margin: 0 auto;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--bg);
+  text-decoration: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.tut-figure a:hover { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(200, 30, 74, 0.12); }
+/* Natural size, capped by the column. The files are saved at logical size,
+   so none is shown larger than it was captured. */
+.tut-figure img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 0 auto;
+}
+
+.tut-figure figcaption {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  margin-top: 8px; font-size: 12.5px; color: var(--muted);
+}
+.tut-figure .figure-cue { color: var(--accent); white-space: nowrap; }
+.tut-figure a:hover + figcaption .figure-cue { color: #f07d99; }
+
+/* Busy overlay: analysis and report rendering are synchronous, so the page
+   says it is working instead of looking frozen. */
 .busy-overlay {
   position: fixed; inset: 0; z-index: 1200;
   background: rgba(4, 11, 20, 0.82);
@@ -906,7 +1138,7 @@ pre, code { max-width: 100%; }
 .busy-note { font-size: 12.5px; color: var(--muted); margin-top: 5px; }
 @media (prefers-reduced-motion: reduce) { .busy-spinner { animation: none; } }
 
-/* --- Tutorial page: denser information, larger type --------------------- */
+/* Tutorial page: denser information, larger type */
 .tutorial-card { padding: 20px 24px; margin-bottom: 20px; }
 .tutorial-card h3 { font-size: 17px; margin-bottom: 10px; }
 .tutorial-card ol, .tutorial-card ul { font-size: 14.5px; line-height: 1.85; margin: 10px 0 0 20px; }

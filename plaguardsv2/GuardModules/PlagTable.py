@@ -30,18 +30,51 @@ COLUMNS = [
     # HolmesGeo-style enrichment, populated for addresses only.
     ("geo_category", "IP category"),
     ("geo_city", "City"),
+    ("geo_region", "Region"),
+    ("geo_region_code", "Region code"),
+    ("geo_postal_code", "Postal code"),
     ("geo_latitude", "City latitude"),
     ("geo_longitude", "City longitude"),
+    # Pivoting on a coordinate without this column invites treating a
+    # country-level guess as a street address.
+    ("geo_accuracy_radius", "Accuracy radius (km)"),
+    ("geo_time_zone", "Time zone"),
     ("geo_country", "Country"),
     ("geo_country_code", "Country code"),
+    ("geo_registered_country", "Registered country"),
     ("geo_continent", "Continent"),
     ("geo_asn", "ASN number"),
     ("geo_organization", "ASN organization"),
     ("geo_network", "Network"),
+    ("geo_network_flags", "Network type"),
     ("geo_reverse_dns", "Reverse DNS"),
 ]
 
 MAX_CELL = 2000
+
+# Leads that make a spreadsheet treat a cell as a formula. Every value here
+# came out of a sample the analyst believes is hostile (CWE-1236).
+_FORMULA_LEAD = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _is_number(value: str) -> bool:
+    try:
+        float(value)
+    except (TypeError, ValueError):
+        return False
+    return True
+
+
+def _csv_safe(value):
+    """Neutralise a formula lead for CSV, where there is no cell type to set.
+
+    A leading apostrophe is the only portable way to say "this is text" in a
+    CSV, so it is added - but never to a genuine number, or every negative
+    longitude in the geolocation columns would stop being a number.
+    """
+    if not isinstance(value, str) or not value.startswith(_FORMULA_LEAD):
+        return value
+    return value if _is_number(value) else "'" + value
 
 
 def _intel_summary(intel: dict) -> tuple[str, str]:
@@ -65,6 +98,9 @@ def _intel_summary(intel: dict) -> tuple[str, str]:
 
 def build_rows(analysis: dict, geo: dict | None = None) -> list[dict]:
     """One row per finding, with geolocation filled in for addresses."""
+    # The report's own labels, so a ticket and the PDF name a finding the same way.
+    from .PlagReport import TYPE_LABEL
+
     geo = geo or {}
     rows = []
     for index, finding in enumerate(analysis.get("findings") or [], 1):
@@ -79,8 +115,8 @@ def build_rows(analysis: dict, geo: dict | None = None) -> list[dict]:
         row = {f"geo_{field}": "" for field in PlagGeo.FIELDS if field != "ip"}
         row.update({
             "n": index,
-            "severity": get("severity", "") or "",
-            "type": ftype,
+            "severity": (get("severity", "") or "").capitalize(),
+            "type": TYPE_LABEL.get(ftype, ftype.replace("_", " ").capitalize()),
             "value": value,
             "defanged_value": PlagGrep.defang(value, ftype),
             "mitre": "; ".join(PlagMitre.describe(t) for t in (get("mitre") or [])),
@@ -107,7 +143,7 @@ def to_csv(rows: list[dict]) -> bytes:
     writer = csv.writer(buf)
     writer.writerow([label for _key, label in COLUMNS])
     for row in rows:
-        writer.writerow([row.get(key, "") for key, _label in COLUMNS])
+        writer.writerow([_csv_safe(row.get(key, "")) for key, _label in COLUMNS])
     # BOM so Excel opens a UTF-8 CSV without mangling non-ASCII values.
     return b"\xef\xbb\xbf" + buf.getvalue().encode("utf-8")
 
@@ -146,7 +182,12 @@ def to_xlsx(rows: list[dict], title: str = "Findings") -> bytes:
     }
     for r, row in enumerate(rows, 2):
         for c, (key, _label) in enumerate(COLUMNS, 1):
-            cell = sheet.cell(row=r, column=c, value=row.get(key, ""))
+            value = row.get(key, "")
+            cell = sheet.cell(row=r, column=c, value=value)
+            # openpyxl types a leading "=" as a formula, which Excel then
+            # evaluates. Pinning to text keeps the value byte-for-byte.
+            if isinstance(value, str) and value.startswith(_FORMULA_LEAD):
+                cell.data_type = "s"
             cell.alignment = Alignment(vertical="top", wrap_text=(key == "context"))
         fill = severity_fill.get(str(row.get("severity", "")).lower())
         if fill:

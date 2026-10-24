@@ -20,7 +20,7 @@ TEMPLATE_DIR = Path(__file__).parent / "report_templates"
 LOGO_PATH = Path(__file__).parent.parent / "PlagWeb" / "static" / "assets" / "plaguard-logo.png"
 
 # Shown on the report cover and in page footers.
-TAGLINE = "PlaguardsV2 · PowerShell deobfuscation & IOC triage for blue teams"
+TAGLINE = "PlaguardsV2 · Script deobfuscation & IOC triage for blue teams"
 
 SEVERITY_ORDER = ["high", "medium", "low", "info"]
 SEVERITY_LABEL = {
@@ -60,11 +60,27 @@ _PROVIDER_LABELS = {p["id"]: p["label"] for p in PlagConfig.PROVIDERS}
 _logo_data_uri_cache: str | None = None
 
 
+# The cover prints the logo about 3.75 in wide; 1100 px is ~290 dpi there. The
+# 2000 px source tripled every PDF and cost the renderer a second per report.
+COVER_LOGO_PX = 1100
+
+
 def _logo_data_uri() -> str | None:
     global _logo_data_uri_cache
     if _logo_data_uri_cache is None and LOGO_PATH.exists():
-        encoded = base64.b64encode(LOGO_PATH.read_bytes()).decode()
-        _logo_data_uri_cache = f"data:image/png;base64,{encoded}"
+        try:
+            from PIL import Image
+
+            image = Image.open(LOGO_PATH)
+            if image.width > COVER_LOGO_PX:
+                height = round(image.height * COVER_LOGO_PX / image.width)
+                image = image.resize((COVER_LOGO_PX, height), Image.LANCZOS)
+            buf = io.BytesIO()
+            image.save(buf, format="PNG", optimize=True)
+            data = buf.getvalue()
+        except Exception:
+            data = LOGO_PATH.read_bytes()
+        _logo_data_uri_cache = "data:image/png;base64," + base64.b64encode(data).decode()
     return _logo_data_uri_cache
 
 
@@ -131,15 +147,12 @@ def _as_dict(f, index: int) -> dict:
     d["severity_label"] = SEVERITY_LABEL.get(d.get("severity"), d.get("severity", ""))
     d["mitre_described"] = [PlagMitre.describe(t) for t in d.get("mitre") or []]
     intel = d["intel"]
-    # The scope entry is an explanatory note about the indicator itself, not
-    # a provider verdict, so it gets its own row instead of masquerading as
-    # one more source in the list.
+    # The scope entry is a note about the indicator, not a verdict, so it gets its
+    # own row rather than posing as one more source.
     scope = intel.get("scope")
     d["scope_note"] = scope.get("detail", "") if scope else ""
-    # Every provider that supports this indicator type is listed - not just
-    # the ones that returned a verdict - so the report shows what wasn't
-    # checked (and why) as plainly as what was. Checked providers sort first;
-    # a page of "no API key configured" rows would bury the answer.
+    # Every provider supporting this type is listed, so what wasn't checked shows
+    # as plainly as what was. Checked ones sort first so answers aren't buried.
     d["intel_display"] = [
         {"label": _PROVIDER_LABELS.get(source, source), **result}
         for source, result in sorted(
@@ -149,10 +162,8 @@ def _as_dict(f, index: int) -> dict:
         )
         if source != "scope"
     ]
-    # A single headline verdict for the overview table: worst wins, so a row
-    # can be read at a glance without expanding every provider. Unchecked
-    # providers don't count toward it, or an all-unconfigured indicator would
-    # read as "unknown" instead of plainly "not checked".
+    # One headline verdict, worst wins. Unchecked providers don't count, or an
+    # all-unconfigured indicator would read "unknown" instead of "not checked".
     checked = [r for r in d["intel_display"] if r.get("verdict") != "not_checked"]
     d["intel_summary"] = _summarise_intel(checked, scope)
     d["verdict_label"] = str(d.get("triage_status", "unreviewed")).replace("_", " ")
@@ -212,14 +223,8 @@ def _geo_for_findings(findings: list[dict], conn) -> dict[str, dict]:
     """Geolocation for every address among the findings, computed live -
     the same approach the spreadsheet export already uses, so a report run
     before a GeoIP database was configured still comes back enriched."""
-    geo: dict[str, dict] = {}
-    for f in findings:
-        if f.get("type") not in ("ip", "ip_port"):
-            continue
-        host = _geo_host(f)
-        if host and host not in geo:
-            geo[host] = PlagGeo.locate(host, conn)
-    return geo
+    hosts = [_geo_host(f) for f in findings if f.get("type") in ("ip", "ip_port")]
+    return PlagGeo.locate_many(hosts, conn)
 
 
 def _resolved_row(name: str, value) -> dict:
@@ -292,11 +297,8 @@ def _numbered_lines(text: str) -> list[dict]:
     return rows
 
 
-# A transform entry is written as "Pass N: ...". Everything else the engine
-# appends to pass_log is a statement about the analysis itself - that the
-# fixed point was not reached, or that high-entropy runs are still opaque.
-# Counting those under "Transforms applied (N)" overstates the count and,
-# worse, presents a caveat as though it were a decode that happened.
+# Transforms are written "Pass N: ..."; anything else in pass_log is a caveat
+# about the analysis, and counting it would present a caveat as a decode.
 _TRANSFORM_PREFIX = "Pass "
 
 
@@ -344,7 +346,7 @@ def build_report_context(analysis: dict, analyst_name: str = "", utc_offset: flo
     generated = datetime.now(timezone.utc) + timedelta(hours=utc_offset)
     tz_label = PlagConfig.format_utc_offset(utc_offset)
     # e.g. "08 August 2026 - 11:17:47 (UTC+7)"
-    generated_display = f"{generated.strftime('%d %B %Y - %H:%M:%S')} ({tz_label})"
+    generated_display = f"{generated.strftime('%d %B %Y, %H:%M:%S')} ({tz_label})"
     generated_date = generated.strftime("%d %B %Y")
     generated_time = f"{generated.strftime('%H:%M:%S')} ({tz_label})"
 
@@ -388,16 +390,15 @@ def build_report_context(analysis: dict, analyst_name: str = "", utc_offset: flo
     }
 
 
-# The body sections of one analysis, in the order the templates emit them.
-# `heading` is how each appears in the rendered PDF: it is what _locate_sections
-# matches on, so it must stay in step with the templates' heading text.
+# Body sections in template order. `heading` is what _locate_sections matches
+# in the rendered PDF, so it must track the templates' heading text.
 _SECTIONS = [
     ("summary", "Analysis Summary", "Analysis Summary"),
     ("indicators", "Indicators at a glance", "Indicators at a glance"),
     ("details", "Finding details", "Finding details"),
     ("deobfuscation", "Deobfuscation", "Deobfuscation"),
-    ("appendix-a", "Appendix A", "Appendix A - Deobfuscated script"),
-    ("appendix-b", "Appendix B", "Appendix B - Original input"),
+    ("appendix-a", "Appendix A", "Appendix A: Deobfuscated script"),
+    ("appendix-b", "Appendix B", "Appendix B: Original input"),
 ]
 
 
@@ -433,9 +434,8 @@ def _combined_toc(sections: list[dict]) -> list[dict]:
             "title": section["source_line"],
             "number": str(i), "level": 1,
         })
-        # No "Analysis Summary" sub-entry here: in a combined report the
-        # analysis' own heading *is* the summary, so listing it would point at
-        # a heading that does not exist.
+        # No "Analysis Summary" sub-entry: in a combined report the analysis heading
+        # is the summary, so the entry would point at nothing.
         subs = [s for s in _sections_for(bool(section.get("grouped_findings")))
                 if s[0] != "summary"]
         for j, (slug, heading, title) in enumerate(subs, 1):
@@ -524,8 +524,7 @@ def _render_split(template_name: str, context: dict, what: str,
     """
     body = _render_one(template_name, context, "body", what)
     toc = context.get("toc") or []
-    body_pages = [p.extract_text() or "" for p in pypdf.PdfReader(io.BytesIO(body)).pages]
-    body_index = _locate_sections(body_pages, toc)
+    body_index = _locate_sections(_page_texts(body), toc)
     # strict: _locate_sections returns one index per contents entry. A
     # mismatch would silently shift every page number that follows it.
     for entry, index in zip(toc, body_index, strict=True):
@@ -548,6 +547,32 @@ def _render_split(template_name: str, context: dict, what: str,
     writer.write(out)
     writer.close()
     return out.getvalue()
+
+
+def _page_texts(pdf: bytes) -> list[str]:
+    """The text of every page, used only to find where each section starts.
+
+    pdfium reads a long report about eight times faster than pypdf, which
+    was close to a tenth of every render; pypdf remains the fallback.
+    """
+    try:
+        import pypdfium2
+    except ImportError:
+        pypdfium2 = None
+    if pypdfium2 is not None:
+        doc = pypdfium2.PdfDocument(pdf)
+        texts = []
+        try:
+            for i in range(len(doc)):
+                page = doc[i]
+                textpage = page.get_textpage()
+                texts.append(textpage.get_text_range())
+                textpage.close()
+                page.close()
+        finally:
+            doc.close()
+        return texts
+    return [p.extract_text() or "" for p in pypdf.PdfReader(io.BytesIO(pdf)).pages]
 
 
 def _locate_sections(page_texts: list[str], toc: list[dict]) -> list[int | None]:

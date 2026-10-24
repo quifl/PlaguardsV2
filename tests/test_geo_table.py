@@ -30,7 +30,13 @@ def test_a_non_public_address_is_answered_without_a_lookup():
     assert set(PlagGeo.FIELDS).issubset(record)
 
 
-def test_a_public_address_says_so_when_nothing_is_configured():
+def test_a_public_address_says_so_when_nothing_is_configured(monkeypatch):
+    # "Nothing configured" must be forced: .env, loaded at import, may hold real
+    # values on a machine set up for geolocation.
+    for key in ("GEOIP_CITY_DB_PATH", "GEOIP_COUNTRY_DB_PATH", "GEOIP_ASN_DB_PATH", "IPINFO_TOKEN"):
+        monkeypatch.delenv(key, raising=False)
+    # Reverse DNS is the network; this test is about the note, not the resolver.
+    monkeypatch.setattr(PlagGeo, "reverse_dns", lambda value, timeout=None: "")
     record = PlagGeo.locate("8.8.8.8", conn=None)
     assert record["category"] == "public"
     assert record["note"] == "no geolocation source configured"

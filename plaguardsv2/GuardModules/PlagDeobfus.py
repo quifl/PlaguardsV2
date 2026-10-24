@@ -8,29 +8,29 @@ from __future__ import annotations
 
 import ast
 import base64
+import bisect
 import gzip
 import math
 import operator
 import re
 import zlib
+from urllib.parse import unquote, unquote_plus
 from collections import Counter
 from dataclasses import dataclass, field
 
-from . import PlagCmd, PlagEncode, PlagFold, PlagJs, PlagLoader, PlagVbs
+from . import PlagCmd, PlagEncode, PlagFold, PlagJs, PlagLoader, PlagMagic, PlagScan, PlagVbs
 from .regex_utils import abbreviated_flag
 
 MAX_PASSES = 10
 MAX_INPUT_SIZE = 5_000_000
 MIN_B64_TOKEN_LEN = 16
 
-# How many Base64 layers to peel inside a single decoded literal. Bounded
-# because the input is untrusted: a payload can nest itself arbitrarily (or
-# self-referentially) purely to make the analyser spin.
+# Base64 layers peeled per literal. Bounded: untrusted input can nest itself
+# arbitrarily, or self-referentially, just to make the analyser spin.
 MAX_B64_NEST_DEPTH = 8
 
-# Residual-blob detection. The length floor keeps ordinary identifiers and
-# prose out; the entropy floors keep padded/repetitive runs out. Hex tops out
-# at 4.0 bits/char against 6.0 for a Base64 alphabet, hence the two floors.
+# Residual blobs: the length floor keeps identifiers and prose out. Separate
+# entropy floors, since hex tops out at 4.0 bits/char against Base64's 6.0.
 MIN_RESIDUAL_BLOB_LEN = 40
 RESIDUAL_ENTROPY_MIN = 4.0
 RESIDUAL_HEX_ENTROPY_MIN = 3.2
@@ -74,6 +74,29 @@ _FROMBASE64_PLAIN_RE = re.compile(
     re.IGNORECASE,
 )
 
+# FromBase64String ignores whitespace, so wrapped blobs are joined into one
+# literal. The closing delimiter bounds the whitespace class.
+_B64_WS_BODY = r"[A-Za-z0-9+/][A-Za-z0-9+/=\s]*[A-Za-z0-9+/=]"
+_FROMBASE64_CALL = r"\[(?:System\.)?Convert\]::FromBase64String\(\s*"
+
+_B64_HERESTRING_RE = re.compile(
+    rf"(?P<call>{_FROMBASE64_CALL})@(?P<q>['\"])\s*(?P<body>{_B64_WS_BODY})\s*(?P=q)@",
+    re.IGNORECASE,
+)
+_B64_QUOTED_WS_RE = re.compile(
+    rf"(?P<call>{_FROMBASE64_CALL})(?P<q>['\"])(?P<body>{_B64_WS_BODY})(?P=q)",
+    re.IGNORECASE,
+)
+
+# Undone only where the script names a decoder: "%20" inside a URL is
+# already part of that URL's value.
+_URL_DECODE_RE = re.compile(
+    r"\[(?:System\.)?(?:Uri|Web\.HttpUtility|Net\.WebUtility|Web\.HttpServerUtility)\]"
+    r"::(?P<fn>UnescapeDataString|UrlDecode)\(\s*"
+    r"(?P<q>['\"])(?P<body>[^'\"\n]*%[0-9A-Fa-f]{2}[^'\"\n]*)(?P=q)\s*\)",
+    re.IGNORECASE,
+)
+
 _CONCAT_RE = re.compile(rf"(?P<a>{_STR})\s*\+\s*(?P<b>{_STR})")
 
 _JOIN_ARRAY_RE = re.compile(
@@ -81,9 +104,8 @@ _JOIN_ARRAY_RE = re.compile(
     re.IGNORECASE,
 )
 
-# The lookahead matters: matching a leading run of literal arguments and
-# stopping at the first variable used to drop the `-f` and leave the rest of
-# the arguments behind as a bare comma list.
+# The lookahead matters: stopping at the first variable dropped the `-f` and
+# left the remaining arguments behind as a bare comma list.
 _FORMAT_OP_RE = re.compile(
     rf"(?P<fmt>{_STR})\s*-f\s*(?P<args>{_STR}(?:\s*,\s*{_STR})*)\s*(?=[)\];]|\n|$)",
     re.IGNORECASE,
@@ -106,15 +128,13 @@ _BXOR_RE = re.compile(
     re.IGNORECASE,
 )
 
-# --- $ShellId / string-indexing / variable-propagation ---------------------
+# $ShellId / string-indexing / variable-propagation
 
 _SHELLID_RE = re.compile(r"\$ShellId\b", re.IGNORECASE)
 _SHELLID_VALUE = "Microsoft.PowerShell"
 
-# Assumed defaults for a stock Windows install. These are NOT derived from the
-# sample - they are resolved because a script that spells a command by slicing
-# $env:ComSpec or $env:PUBLIC is unreadable without them. The pass label says
-# "assumed" so the report can keep them apart from derived values.
+# Assumed stock-Windows defaults, not derived from the sample: without them a
+# command sliced out of $env:ComSpec is unreadable. The label says "assumed".
 _ENV_DEFAULTS = {
     "comspec": r"C:\Windows\system32\cmd.exe",
     "windir": r"C:\Windows",
@@ -122,16 +142,8 @@ _ENV_DEFAULTS = {
     "programdata": r"C:\ProgramData",
     "allusersprofile": r"C:\ProgramData",
     "public": r"C:\Users\Public",
-    # TEMP and TMP are deliberately absent. They are the one pair here whose
-    # value genuinely varies per account, so there is no deterministic default
-    # to substitute - which makes them UNKNOWN under this engine's own rule.
-    #
-    # The placeholder that used to stand in for the account segment
-    # (C:\Users\<user>\AppData\Local\Temp) was worse than leaving the variable
-    # alone: the angle brackets split the path, and IOC extraction read the
-    # fragments as indicators - reporting a fabricated mutex "Local\Temp" and a
-    # truncated path "C:\Users" that appeared nowhere in the sample. Inventing
-    # an indicator is the failure this engine ranks above any missed one.
+    # TEMP and TMP are absent: they vary per account, so there is no default,
+    # and a placeholder path here gets extracted as fabricated indicators.
 }
 
 # $PSHOME is an automatic variable rather than an environment one, but it is
@@ -151,7 +163,7 @@ _STRING_INDEX_RE = re.compile(rf"({_STR})\s*\[\s*(-?\d+)\s*\]")
 _ASSIGN_COUNT_RE = re.compile(r"\$(\w+)\s*[+\-*/%]?=(?!=)")
 _LITERAL_ASSIGN_RE = re.compile(rf"\$(\w+)\s*=\s*({_STR})\s*(?=[;\n]|$)", re.MULTILINE)
 
-# --- numeric-array -> char idioms (annotated, not rewritten in place) ------
+# numeric-array -> char idioms (annotated, not rewritten in place)
 
 _NUM_ARRAY_ELEMENT = rf"(?:\(?\s*{_ARITH_TOKEN}\s*\)?)"
 _NUM_ARRAY_ASSIGN_RE = re.compile(
@@ -206,16 +218,14 @@ class TransformRecord:
 class DeobfuscationResult:
     original: str
     deobfuscated: str
-    # Same transforms, but with the input's own line structure left alone.
-    # `deobfuscated` additionally runs through prettify(); a report shows both
-    # so the analyst can line the result up against the original.
+    # The same transforms with the input's own line structure kept, so a report
+    # can line it up against the original. `deobfuscated` is also prettified.
     deobfuscated_raw: str = ""
     pass_log: list[str] = field(default_factory=list)
     truncated: bool = False
     iterations: int = 0
-    # False when the pass loop ran out of budget while still making progress,
-    # i.e. the output is only partially peeled. `truncated` is about input
-    # SIZE and says nothing about this.
+    # False when the pass loop ran out of budget while still making progress.
+    # Unrelated to `truncated`, which is about input size.
     converged: bool = True
     residual_blobs: list[ResidualBlob] = field(default_factory=list)
     transforms: list[TransformRecord] = field(default_factory=list)
@@ -267,7 +277,9 @@ def run(source: str) -> DeobfuscationResult:
         ("resolved well-known $env: value(s) (assumed default Windows values)", _resolve_env_variables),
         ("resolved literal string indexing", _resolve_string_indexing),
         ("decoded -EncodedCommand base64 (UTF-16LE)", _decode_encoded_command),
+        ("normalised line-wrapped Base64 literal(s)", _normalize_base64_whitespace),
         ("decoded [Convert]::FromBase64String literal(s)", _decode_frombase64_literals),
+        ("decoded percent-encoded literal(s)", _decode_url_encoded),
         ("folded literal string concatenation", _fold_string_concatenation),
         ("folded -join on literal array", _fold_join_operator),
         ("folded -f format operator on literals", _fold_format_operator),
@@ -284,42 +296,51 @@ def run(source: str) -> DeobfuscationResult:
         ("recovered XOR-decoded byte-array payload", PlagLoader.recover_xor_loop),
     ]
     passes += _language_passes(source)
+    # Tried only in a round where no dedicated pass changed anything, so a
+    # generic recipe search never pre-empts the decoder written for that case.
+    fallback_passes = [
+        ("decoded encoded run(s) with a CyberChef-style recipe", _magic_decode_runs),
+    ]
 
     iterations = 0
     transforms: list[TransformRecord] = []
     converged = True
-    for i in range(MAX_PASSES):
-        iterations = i + 1
-        changed_this_round = False
-        for label, fn in passes:
+
+    def apply(stage, round_no: int) -> bool:
+        nonlocal text
+        changed_any = False
+        for label, fn in stage:
             before = text
             new_text, changed, detail = fn(text)
-            if changed:
-                text = new_text
-                changed_this_round = True
-                entry = f"Pass {i + 1}: {label}"
-                if detail:
-                    entry += f" ({detail})"
-                log.append(entry)
-                preview_before, preview_after = _change_previews(before, new_text)
-                transforms.append(TransformRecord(
-                    name=label,
-                    detail=detail,
-                    before=preview_before,
-                    after=preview_after,
-                    assumed="assumed" in label.lower(),
-                    iteration=i + 1,
-                ))
-        if not changed_this_round:
+            if not changed:
+                continue
+            text = new_text
+            changed_any = True
+            entry = f"Pass {round_no}: {label}"
+            if detail:
+                entry += f" ({detail})"
+            log.append(entry)
+            preview_before, preview_after = _change_previews(before, new_text)
+            transforms.append(TransformRecord(
+                name=label,
+                detail=detail,
+                before=preview_before,
+                after=preview_after,
+                assumed="assumed" in label.lower(),
+                iteration=round_no,
+            ))
+        return changed_any
+
+    for i in range(MAX_PASSES):
+        iterations = i + 1
+        if not apply(passes, i + 1) and not apply(fallback_passes, i + 1):
             break
     else:
-        # Fell out of range() while the last round was still rewriting things:
-        # the fixed point was never reached, so what follows is half-peeled.
-        # Saying so explicitly is the difference between "nothing left to do"
-        # and "we gave up", which the result otherwise presents identically.
+        # Out of rounds while still rewriting: the output is half-peeled, and saying
+        # so separates "nothing left to do" from "gave up".
         converged = False
         log.append(
-            f"Fixed point not reached after {MAX_PASSES} passes - output is only "
+            f"Fixed point not reached after {MAX_PASSES} passes: output is only "
             f"partially deobfuscated and may still contain encoded stages"
         )
 
@@ -333,7 +354,7 @@ def run(source: str) -> DeobfuscationResult:
     if residual_blobs:
         log.append(
             f"{len(residual_blobs)} high-entropy blob(s) left unresolved by static "
-            f"analysis - still encoded, contents not recovered"
+            f"analysis: still encoded, contents not recovered"
         )
 
     return DeobfuscationResult(
@@ -349,9 +370,7 @@ def run(source: str) -> DeobfuscationResult:
     )
 
 
-# ---------------------------------------------------------------------------
 # helpers
-# ---------------------------------------------------------------------------
 
 def _normalize(text: str) -> str:
     text = text.replace("\r\n", "\n").replace("\r", "\n")
@@ -360,6 +379,9 @@ def _normalize(text: str) -> str:
 
 
 _COMMENT_TOKEN_RE = re.compile(r"\x00CMT(\d+)\x00")
+
+
+_MASK_STOP_RE = re.compile(r"['\"#]|<#")
 
 
 def _mask_comments(text: str) -> tuple[str, list[str]]:
@@ -380,25 +402,17 @@ def _mask_comments(text: str) -> tuple[str, list[str]]:
     out: list[str] = []
     i, n = 0, len(text)
     while i < n:
+        # Ordinary text is copied in one slice up to the next quote or comment.
+        stop = _MASK_STOP_RE.search(text, i)
+        if stop is None:
+            out.append(text[i:])
+            break
+        if stop.start() > i:
+            out.append(text[i:stop.start()])
+            i = stop.start()
         c = text[i]
         if c in ("'", '"'):
-            quote = c
-            j = i + 1
-            terminated = False
-            while j < n:
-                if quote == '"' and text[j] == "`" and j + 1 < n:
-                    j += 2
-                    continue
-                if text[j] == quote:
-                    if j + 1 < n and text[j + 1] == quote:
-                        j += 2
-                        continue
-                    j += 1
-                    terminated = True
-                    break
-                j += 1
-            if not terminated:
-                j = n
+            j = PlagScan.literal_end(text, i)
             out.append(text[i:j])
             i = j
         elif text[i:i + 2] == "<#":
@@ -468,34 +482,21 @@ def _escape_for_comment(value: str) -> str:
     return "".join(c if c.isprintable() else f"\\x{ord(c):02x}" for c in value)
 
 
+_QUOTE_START_RE = re.compile(r"['\"]")
+
+
 def _find_string_spans(text: str):
+    """(start, end) of every string literal, sorted and disjoint."""
     spans = []
-    i, n = 0, len(text)
-    while i < n:
-        c = text[i]
-        if c in ("'", '"'):
-            quote = c
-            j = i + 1
-            terminated = False
-            while j < n:
-                if quote == '"' and text[j] == "`" and j + 1 < n:
-                    j += 2
-                    continue
-                if text[j] == quote:
-                    if j + 1 < n and text[j + 1] == quote:
-                        j += 2
-                        continue
-                    j += 1
-                    terminated = True
-                    break
-                j += 1
-            if not terminated:
-                j = n
-            spans.append((i, j))
-            i = j
-        else:
-            i += 1
-    return spans
+    i = 0
+    while True:
+        m = _QUOTE_START_RE.search(text, i)
+        if m is None:
+            return spans
+        i = m.start()
+        j = PlagScan.literal_end(text, i)
+        spans.append((i, j))
+        i = j
 
 
 def _inside_any_span(m: re.Match, spans) -> bool:
@@ -504,7 +505,10 @@ def _inside_any_span(m: re.Match, spans) -> bool:
     A match that merely *encloses* a literal (the quoted Base64 argument of a
     decoder call, say) is not inside one and must still be rewritten.
     """
-    return any(start <= m.start() and m.end() <= end for start, end in spans)
+    # Spans are sorted and disjoint: only the last one starting at or before the
+    # match can contain it. A linear scan per match made large scripts quadratic.
+    k = bisect.bisect_right(spans, (m.start(), float("inf"))) - 1
+    return k >= 0 and spans[k][0] <= m.start() and m.end() <= spans[k][1]
 
 
 def _preview(value: str) -> str:
@@ -546,11 +550,8 @@ def _shannon_entropy(value: str) -> float:
     )
 
 
-# '=' is Base64 *padding*, so it belongs at the end of a run and nowhere else.
-# With '=' in the body the run absorbed any "name=" prefix it abutted, which
-# shifted the decode by those bytes and made a perfectly decodable blob look
-# like an encrypted stage - it fired on every "?param=<base64>" in a submitted
-# proxy log. The lookbehind stops a match starting mid-token.
+# '=' is padding, so only at the end of a run: in the body it absorbed a
+# "name=" prefix and made "?param=<base64>" look encrypted. No mid-token start.
 _RESIDUAL_RUN_RE = re.compile(
     r"(?<![A-Za-z0-9+/=])[A-Za-z0-9+/]{%d,}={0,2}(?![A-Za-z0-9+/=])"
     % MIN_RESIDUAL_BLOB_LEN
@@ -601,6 +602,15 @@ def _already_recovered(run: str, text: str) -> bool:
     return len(probe) >= 8 and probe in text
 
 
+def _magic_recovered(run: str, text: str) -> bool:
+    """True when the recipe search opened this run and its plaintext is in the output."""
+    result = PlagMagic.magic(run)
+    if result is None:
+        return False
+    probe = result.output.strip()[:_RECOVERED_PROBE_LEN]
+    return len(probe) >= 8 and probe in text
+
+
 def _scan_residual_blobs(text: str) -> list[ResidualBlob]:
     """Report the encoded runs that survived every pass.
 
@@ -619,7 +629,7 @@ def _scan_residual_blobs(text: str) -> list[ResidualBlob]:
         floor = RESIDUAL_HEX_ENTROPY_MIN if is_hex else RESIDUAL_ENTROPY_MIN
         if entropy < floor:
             continue
-        if _already_recovered(run, text):
+        if _already_recovered(run, text) or _magic_recovered(run, text):
             continue
         blobs.append(ResidualBlob(
             offset=m.start(),
@@ -656,9 +666,15 @@ def _apply_outside_strings(text: str, transform):
 
 def _b64_bytes(b64: str) -> bytes | None:
     """Raw bytes for a Base64 token, padding it first. Obfuscators routinely
-    strip the '=' padding, so a missing one is not a reason to give up."""
+    strip the '=' padding, so a missing one is not a reason to give up.
+
+    Whitespace is removed before the padding is worked out, not left to the
+    decoder to discard: counting it toward the length computes the wrong
+    amount of padding and turns a line-wrapped blob into a decode failure.
+    """
+    token = "".join(b64.split())
     try:
-        return base64.b64decode(b64 + "=" * (-len(b64) % 4), validate=False)
+        return base64.b64decode(token + "=" * (-len(token) % 4), validate=False)
     except Exception:
         return None
 
@@ -707,9 +723,7 @@ def _safe_eval_arith(expr: str) -> int | None:
     return result
 
 
-# ---------------------------------------------------------------------------
 # passes
-# ---------------------------------------------------------------------------
 
 def _resolve_shellid(text: str):
     count = [0]
@@ -977,12 +991,11 @@ def _peel_frombase64_layers(text: str, depth: int = 0) -> str:
     """
     if depth >= MAX_B64_NEST_DEPTH:
         return text
-    # Fold at EVERY level, not just the outermost. An inner stage is spliced
-    # into the expression slot its decoder call occupied, so a multi-statement
-    # stage lands glued to whatever preceded it ("$s = $d = ..."). Folding the
-    # stage to its values before it is spliced means the indicator is already
-    # resolved by the time that happens, instead of sitting in a malformed
-    # statement no later pass can parse.
+    # Before peeling, not after: a line-wrapped blob one stage down is
+    # invisible until contiguous, and by fragment time it is already quoted.
+    text = _normalize_base64_whitespace(text)[0]
+    # Fold at every level: a spliced inner stage lands glued to what preceded it
+    # ("$s = $d = ..."), so its values must be resolved before the splice.
     peeled, count = _rewrite_frombase64(
         text,
         lambda decoded: _fold_decoded_fragment(
@@ -992,10 +1005,8 @@ def _peel_frombase64_layers(text: str, depth: int = 0) -> str:
     return peeled if count else text
 
 
-# Passes safe to re-apply to a decoded fragment. Deliberately excludes the
-# decoders themselves (_peel_frombase64_layers already owns nesting, with its
-# own depth bound) and the annotating passes, whose output is commentary meant
-# for the top-level document rather than for a value about to be re-quoted.
+# Passes safe to re-run on a decoded fragment. Excludes the decoders, which
+# own nesting, and the annotating passes, whose output is top-level commentary.
 _FRAGMENT_PASS_NAMES = (
     "_resolve_string_indexing",
     "_fold_string_concatenation",
@@ -1006,6 +1017,7 @@ _FRAGMENT_PASS_NAMES = (
     "_strip_junk_backticks",
     "_strip_redundant_casts",
     "_propagate_literal_variables",
+    "_decode_url_encoded",
 )
 MAX_FRAGMENT_ROUNDS = 6
 _fragment_passes_cache: list | None = None
@@ -1047,9 +1059,8 @@ def _fold_decoded_fragment(text: str) -> str:
             try:
                 new_text, changed, _detail = fn(text)
             except Exception:
-                # A fragment is arbitrary decoded bytes and may not be
-                # well-formed script at all. A pass that cannot cope with it is
-                # not a reason to lose the fragment.
+                # A fragment may not be well-formed script, and a pass failing on it is no
+                # reason to lose the fragment.
                 continue
             if changed:
                 text = new_text
@@ -1227,6 +1238,60 @@ def _resolve_bxor(text: str):
     return new_text, count[0] > 0, (f"{count[0]} value(s)" if count[0] else "")
 
 
+def _normalize_base64_whitespace(text: str):
+    """Collapse a Base64 argument that has been broken across lines.
+
+    Scoped to the argument of a FromBase64String call rather than applied to
+    every here-string: outside that call the newlines are part of the string's
+    real value, and removing them would change what the script does.
+    """
+    count = [0]
+
+    def repl(m: re.Match) -> str:
+        body = m.group("body")
+        stripped = "".join(body.split())
+        # A no-op reported as a change would stop the pass loop reaching a
+        # fixed point.
+        if stripped == body or len(stripped) < MIN_B64_TOKEN_LEN:
+            return m.group(0)
+        if _b64_bytes(stripped) is None:
+            return m.group(0)
+        count[0] += 1
+        return f"{m.group('call')}'{stripped}'"
+
+    new_text = _B64_HERESTRING_RE.sub(repl, text)
+    new_text = _B64_QUOTED_WS_RE.sub(repl, new_text)
+    return new_text, count[0] > 0, (f"{count[0]} literal(s)" if count[0] else "")
+
+
+def _decode_url_encoded(text: str):
+    """Resolve percent-encoded literals passed to a named URL decoder.
+
+    UrlDecode and UnescapeDataString differ on one point - the former treats
+    '+' as a space and the latter does not - so they are decoded separately
+    rather than through whichever happens to be handy.
+    """
+    count = [0]
+
+    def repl(m: re.Match) -> str:
+        if _inside_any_span(m, spans):
+            return m.group(0)
+        body = m.group("body")
+        decoder = unquote_plus if m.group("fn").lower() == "urldecode" else unquote
+        try:
+            decoded = decoder(body, errors="replace")
+        except Exception:
+            return m.group(0)
+        if decoded == body:
+            return m.group(0)
+        count[0] += 1
+        return _make_ps_literal(decoded)
+
+    spans = _find_string_spans(text)
+    new_text = _URL_DECODE_RE.sub(repl, text)
+    return new_text, count[0] > 0, (f"{count[0]} literal(s)" if count[0] else "")
+
+
 def _strip_junk_backticks(text: str):
     count = [0]
     pattern = re.compile(r"(?<=[A-Za-z0-9])`(?=[A-Za-z0-9])")
@@ -1269,11 +1334,8 @@ def _decode_standalone_payloads(text: str):
         # Short lines are ordinary prose far more often than a payload.
         if len(stripped) < PlagEncode.MIN_B64_LEN or stripped.startswith("#"):
             continue
-        # Idempotency guard, matching the one the annotating passes use. This
-        # pass re-decodes the same blob on every round otherwise, so the loop
-        # never reaches a fixed point: the run burns all MAX_PASSES rounds,
-        # stacks a duplicate comment each time, and then reports converged
-        # False for input it had in fact fully solved on round one.
+        # Idempotency guard: without it this pass re-decodes the same blob each round,
+        # never converges, stacks duplicate comments, and reports converged False.
         following = lines[index + 1].lstrip() if index + 1 < len(lines) else ""
         if following.startswith(_DECODED_MARKER):
             continue
@@ -1287,6 +1349,41 @@ def _decode_standalone_payloads(text: str):
     if not hits:
         return text, False, ""
     return "\n".join(out), True, f"{hits} line(s)"
+
+
+_RECIPE_MARKER = "# [recipe: "
+
+
+def _magic_decode_runs(text: str):
+    """Open encoded runs no dedicated pass reached, using PlagMagic's recipe search.
+
+    The run stays where it is and the plaintext goes on a marked line beneath
+    it, so the recipe can be checked against the source in CyberChef.
+    """
+    inserts: dict[int, list[str]] = {}
+    recipes: list[str] = []
+    for run in PlagMagic.candidates(text):
+        result = PlagMagic.magic(run)
+        if result is None:
+            continue
+        # Already decoded, by this pass on an earlier round or by a dedicated one.
+        probe = result.output.strip()[:_RECOVERED_PROBE_LEN]
+        if len(probe) >= 8 and probe in text:
+            continue
+        line_no = text.count("\n", 0, text.find(run))
+        inserts.setdefault(line_no, []).append(
+            f"{_RECIPE_MARKER}{result.label}] {result.output.strip()}"
+        )
+        recipes.append(result.label)
+
+    if not recipes:
+        return text, False, ""
+    out: list[str] = []
+    for index, line in enumerate(text.split("\n")):
+        out.append(line)
+        out.extend(inserts.get(index, ()))
+    kinds = ", ".join(sorted(set(recipes)))
+    return "\n".join(out), True, f"{len(recipes)} run(s): {kinds}"
 
 
 _REDUNDANT_CAST_RE = re.compile(r"\[(?:System\.)?String\](?!\s*::)\s*", re.IGNORECASE)
@@ -1310,46 +1407,43 @@ def _strip_redundant_casts(text: str):
     return new_text, changed, (f"{count[0]} cast(s)" if count[0] else "")
 
 
+_SPLIT_STOP_RE = re.compile(r"['\"(\[{)\]};]")
+
+
 def _split_top_level_statements(line: str) -> list[str]:
     """Split a physical line on ';' separators that are at the top level -
     i.e. not inside a string literal or a bracketed expression."""
     parts: list[str] = []
     buf: list[str] = []
     depth = 0
-    quote = None
     i, n = 0, len(line)
     while i < n:
-        c = line[i]
-        if quote:
-            buf.append(c)
-            if quote == '"' and c == "`" and i + 1 < n:
-                buf.append(line[i + 1])
-                i += 2
-                continue
-            if c == quote:
-                if i + 1 < n and line[i + 1] == quote:
-                    buf.append(line[i + 1])
-                    i += 2
-                    continue
-                quote = None
-            i += 1
-            continue
-
+        # Copy ordinary text in one slice up to the next character that matters.
+        stop = _SPLIT_STOP_RE.search(line, i)
+        if stop is None:
+            buf.append(line[i:])
+            break
+        k = stop.start()
+        if k > i:
+            buf.append(line[i:k])
+        c = line[k]
         if c in ("'", '"'):
-            quote = c
-            buf.append(c)
-        elif c in "([{":
+            end = PlagScan.literal_end(line, k)
+            buf.append(line[k:end])
+            i = end
+            continue
+        if c in "([{":
             depth += 1
             buf.append(c)
         elif c in ")]}":
             depth = max(0, depth - 1)
             buf.append(c)
-        elif c == ";" and depth == 0:
+        elif depth == 0:
             parts.append("".join(buf))
             buf = []
         else:
             buf.append(c)
-        i += 1
+        i = k + 1
 
     if buf:
         parts.append("".join(buf))

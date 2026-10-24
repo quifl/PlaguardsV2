@@ -5,85 +5,111 @@
 
 <div class="settings-section">
   <h3>Threat Intel API Keys</h3>
-  <p class="lede">All optional - lookups are skipped and labeled "not checked" for any provider left blank. Keys are stored in the local database on this machine and never leave it except in the lookup request to that provider.</p>
+  <p class="lede">All optional. A provider left blank is skipped and marked "not checked". Keys are stored in the local database on this machine and are only ever sent to their own provider, with each lookup.</p>
   <form method="post" action="{{ url_for('settings') }}" class="settings-form">
     <input type="hidden" name="form" value="keys" />
     {% for p in providers %}
-    {% set configured = current_keys.get(p.id) %}
+    {% set source = key_sources.get(p.id) %}
     <div class="settings-row">
       <label for="{{ p.id }}">{{ p.label }}</label>
       <input type="password" id="{{ p.id }}" name="{{ p.id }}"
-             class="key-input {{ 'is-set' if configured else 'is-unset' }}"
-             placeholder="{{ 'configured' if configured else 'not configured' }}" autocomplete="off" />
-      <span class="key-state {{ 'ok' if configured else 'off' }}">
-        <i class="bi {{ 'bi-check-circle-fill' if configured else 'bi-x-circle' }}"></i>
-        {{ 'Configured' if configured else 'Not set' }}
+             class="key-input {{ 'is-set' if source else 'is-unset' }}"
+             placeholder="{{ 'configured, type to replace' if source else 'not configured' }}" autocomplete="off" />
+      <span class="key-state {{ 'ok' if source else 'off' }}">
+        <i class="bi {{ 'bi-check-circle-fill' if source else 'bi-x-circle' }}"></i>
+        {% if source == "settings" %}Configured
+        {# Its own form: pressing Enter in a key field must submit Save, never Remove. #}
+        <button type="submit" form="removeKeyForm" name="remove_key" value="{{ p.id }}" class="key-remove"
+                title="Forget the key saved here" data-busy="Removing the key…"
+                onclick="return confirm('Remove the saved {{ p.label }} key?');">Remove</button>
+        {% elif source == "env" %}Set in .env
+        {% else %}Not set{% endif %}
       </span>
-      <a class="docs-link" href="{{ p.docs_url }}" target="_blank" rel="noopener">Get a key <i class="bi bi-box-arrow-up-right"></i></a>
+      <a class="docs-link" href="{{ p.docs_url }}" target="_blank" rel="noopener" data-no-busy>Get a key <i class="bi bi-box-arrow-up-right"></i></a>
     </div>
     {% endfor %}
     <div class="settings-actions">
       <button type="submit" class="btn btn-custom" data-busy="Saving API keys…">Save API Keys</button>
     </div>
   </form>
+  <form id="removeKeyForm" method="post" action="{{ url_for('settings') }}">
+    <input type="hidden" name="form" value="keys" />
+  </form>
 </div>
 
 <div class="settings-section" id="geoSection">
   <h3>Geolocation Databases</h3>
-  <p class="lede">All optional - a field left blank is simply skipped. Point at MaxMind's local GeoLite2 databases and lookups never leave this machine; fill in any mix of the three and they're merged into one record per address.</p>
+  <p class="lede">All optional; a blank field is skipped. Point these at MaxMind's local GeoLite2 databases and lookups never leave this machine. Fill in any mix of the three and they're merged into one record per address.</p>
   <ol class="settings-steps">
-    <li>Create a free account at MaxMind's <a href="https://www.maxmind.com/en/geolite2/signup" target="_blank" rel="noopener">GeoLite2 signup page</a>.</li>
-    <li>Once signed in, open <strong>Manage License Keys</strong> under your account and generate one - MaxMind requires it before any database can be downloaded.</li>
-    <li>Go to <strong>Download Files</strong> and grab GeoLite2-City, GeoLite2-Country and GeoLite2-ASN. The <span class="mono">.tar.gz</span> works as-is below - no need to extract it first.</li>
-    <li>Paste each downloaded file's path into the matching field.</li>
+    <li>Create a free account at MaxMind's <a href="https://www.maxmind.com/en/geolite2/signup" target="_blank" rel="noopener" data-no-busy>GeoLite2 signup page</a>.</li>
+    <li>Once signed in, open <strong>Manage License Keys</strong> under your account and generate one. MaxMind requires it before any database can be downloaded.</li>
+    <li>Go to <strong>Download Files</strong> and get GeoLite2-City, GeoLite2-Country and GeoLite2-ASN. The <span class="mono">.tar.gz</span> works as it is; there's no need to extract it.</li>
+    <li>Paste each file's path, or the folder holding it, into the matching field.</li>
   </ol>
   <form method="post" action="{{ url_for('settings') }}" class="settings-form">
     <input type="hidden" name="form" value="geoip" />
+    {% for kind, label, hint in [
+        ("city", "City", "city, coordinates, country, continent, network"),
+        ("country", "Country", "country and continent when City has no match"),
+        ("asn", "ASN", "operator name and network, added to either"),
+    ] %}
     <div class="settings-row">
-      <label for="geoip_city_db">GeoLite2 City database</label>
-      <input type="text" id="geoip_city_db" name="geoip_city_db" value="{{ geoip_db_paths.city }}"
-             placeholder="C:\path\to\GeoLite2-City.mmdb" />
-      <span class="field-hint">city, coordinates, country, continent, network</span>
+      <label for="geoip_{{ kind }}_db">GeoLite2 {{ label }} database</label>
+      <input type="text" id="geoip_{{ kind }}_db" name="geoip_{{ kind }}_db" value="{{ geoip_db_paths[kind] }}"
+             placeholder="C:\path\to\GeoLite2-{{ label }}.mmdb" />
+      <span class="field-hint">
+        {% if geoip_db_paths[kind] %}
+        {% if geoip_found[kind] %}<span class="key-state ok"><i class="bi bi-check-circle-fill"></i> Found</span>
+        {% else %}<span class="key-state off"><i class="bi bi-x-circle"></i> Not found</span>{% endif %}
+        {% endif %}
+        <span class="geo-hint">{{ hint }}</span>
+      </span>
+      {% if loop.first %}
       <a class="docs-link" href="https://dev.maxmind.com/geoip/geolite2-free-geolocation-data"
-         target="_blank" rel="noopener" data-no-busy>Get the DBs <i class="bi bi-box-arrow-up-right"></i></a>
+         target="_blank" rel="noopener" data-no-busy>Get the databases <i class="bi bi-box-arrow-up-right"></i></a>
+      {% endif %}
     </div>
-    <div class="settings-row">
-      <label for="geoip_country_db">GeoLite2 Country database</label>
-      <input type="text" id="geoip_country_db" name="geoip_country_db" value="{{ geoip_db_paths.country }}"
-             placeholder="C:\path\to\GeoLite2-Country.mmdb" />
-      <span class="field-hint">country/continent fallback when City has no match</span>
-    </div>
-    <div class="settings-row">
-      <label for="geoip_asn_db">GeoLite2 ASN database</label>
-      <input type="text" id="geoip_asn_db" name="geoip_asn_db" value="{{ geoip_db_paths.asn }}"
-             placeholder="C:\path\to\GeoLite2-ASN.mmdb" />
-      <span class="field-hint">operator name and network, layered on top of either</span>
-    </div>
+    {% endfor %}
     <div class="settings-actions">
       <button type="submit" class="btn btn-custom" data-busy="Saving geolocation settings…">Save Geolocation Settings</button>
     </div>
   </form>
 </div>
 
+<div class="settings-section" id="cyberchefSection">
+  <h3>CyberChef (offline)</h3>
+  {% if cyberchef %}
+  <p class="lede"><span class="key-state ok"><i class="bi bi-check-circle-fill"></i> CyberChef {{ cyberchef.version }} is installed.</span>
+    The <strong>CyberChef</strong> buttons on a result page open it with the recipe already loaded.
+    It runs from this server and cannot send data anywhere else.
+    <a href="{{ url_for('cyberchef_index') }}" target="_blank" rel="noopener" data-no-busy>Open CyberChef</a></p>
+  {% else %}
+  <p class="lede"><span class="key-state off"><i class="bi bi-x-circle"></i> Not installed.</span>
+    Encoded runs are still decoded and their recipes listed. To open them in CyberChef, run
+    <span class="mono">python tools/fetch_cyberchef.py</span> once and restart PlaguardsV2.
+    It downloads GCHQ's release, verifies it, and serves it locally.</p>
+  {% endif %}
+</div>
+
 <div class="settings-section" id="generalSection">
   <h3>General</h3>
-  <p class="lede">Personalize how PlaguardsV2 stores history and attributes reports.</p>
+  <p class="lede">How much history to keep, and how reports are attributed and timestamped.</p>
   <form method="post" action="{{ url_for('settings') }}" class="settings-form">
     <input type="hidden" name="form" value="general" />
     <div class="settings-row">
       <label for="history_limit">Keep this many analyses</label>
       <div class="number-field">
-        <input type="number" id="history_limit" name="history_limit" min="1" max="1000" value="{{ history_limit }}" />
+        <input type="number" id="history_limit" name="history_limit" min="1" max="1000" value="{{ history_limit }}" required />
         <span class="number-steppers">
           <button type="button" class="number-step" data-step="up" aria-label="Increase"><i class="bi bi-chevron-up"></i></button>
           <button type="button" class="number-step" data-step="down" aria-label="Decrease"><i class="bi bi-chevron-down"></i></button>
         </span>
       </div>
-      <span class="field-hint">oldest are auto-deleted beyond this</span>
+      <span class="field-hint">older ones are deleted automatically</span>
     </div>
     <div class="settings-row">
-      <label for="analyst_name">Analyst / organization name</label>
-      <input type="text" id="analyst_name" name="analyst_name" value="{{ analyst_name }}" placeholder="shown on PDF reports" />
+      <label for="analyst_name">Analyst or organization name</label>
+      <input type="text" id="analyst_name" name="analyst_name" value="{{ analyst_name }}" placeholder="printed on PDF reports" />
       <span class="field-hint">optional</span>
     </div>
     <div class="settings-row">
@@ -95,7 +121,7 @@
           <button type="button" class="number-step" data-step="down" aria-label="Decrease"><i class="bi bi-chevron-down"></i></button>
         </span>
       </div>
-      <span class="field-hint">used for report &amp; history timestamps</span>
+      <span class="field-hint">used for report and History timestamps</span>
     </div>
     <div class="settings-actions">
       <button type="submit" class="btn btn-custom" data-busy="Saving settings…">Save General Settings</button>
@@ -106,9 +132,9 @@
 <div class="settings-section" id="dangerSection">
   <h3>Danger Zone</h3>
   <div class="danger-zone">
-    <p>Permanently deletes every stored analysis, finding, and triage decision. API keys and general settings are kept.</p>
+    <p>Permanently deletes every stored analysis, finding and triage decision. API keys and general settings are kept.</p>
     <form method="post" action="{{ url_for('settings') }}"
-          onsubmit="return confirm('Delete ALL analysis history? This cannot be undone.');">
+          onsubmit="return confirm('Delete all analysis history? This cannot be undone.');">
       <input type="hidden" name="form" value="clear_history" />
       <div class="settings-actions">
         <button type="submit" class="btn btn-danger" data-busy="Clearing history…"><i class="bi bi-trash"></i> Clear All History</button>

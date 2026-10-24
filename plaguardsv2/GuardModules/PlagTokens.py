@@ -14,25 +14,22 @@ class Token:
     value: str
 
 
-# Hex and binary literals have to be recognised here, not later: a bare `\d+`
-# matched only the leading "0" of `0x41`, the "x41" lexed as a name and was
-# dropped, and the payload byte silently became zero.
+# Hex and binary literals are recognised here: a bare `\d+` took only the "0"
+# of `0x41`, and the payload byte silently became zero.
 _NUM_RE = re.compile(r"0[xX][0-9a-fA-F]+|0[bB][01]+|\d+")
 _NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 _VAR_RE = re.compile(r"\$(?:\{(?P<braced>[^}]*)\}|(?P<plain>[A-Za-z_][A-Za-z0-9_]*))")
 
-# A multiplier suffix is unambiguous because it can only ever follow a numeric
-# literal, and no PowerShell name may start with a digit - so `1kb` can never
-# be the tail of an identifier the way a bare `kb` could.
+# A multiplier suffix only ever follows a numeric literal, and no name starts
+# with a digit, so `1kb` cannot be the tail of an identifier.
 _MULTIPLIER_RE = re.compile(r"(kb|mb|gb|tb|pb)(?![A-Za-z0-9_])", re.IGNORECASE)
 _MULTIPLIERS = {
     "kb": 1024, "mb": 1024 ** 2, "gb": 1024 ** 3,
     "tb": 1024 ** 4, "pb": 1024 ** 5,
 }
 
-# Only list a word here if the parser also dispatches on it. A word that
-# tokenizes but is never handled makes the parser drop its right operand and
-# return the left one unchanged, which reads downstream as a resolved value.
+# List a word only if the parser dispatches on it: an unhandled one drops its
+# right operand and reads downstream as a resolved value.
 _OPERATOR_WORDS = (
     "join", "split",
     "replace", "ireplace", "creplace",
@@ -163,9 +160,8 @@ def tokenize(text: str) -> list[Token] | None:
             continue
 
         if c == "%":
-            # Disambiguated by operand position, because `%` is both modulo and
-            # the ForEach-Object alias: classifying it as an operator wherever
-            # it appeared broke every `| %{ ... }` pipeline in the corpus.
+            # Disambiguated by operand position: `%` is both modulo and the ForEach-Object
+            # alias, and treating it as an operator broke every `| %{ ... }` pipeline.
             prev = tokens[-1] if tokens else None
             binary = prev is not None and (
                 prev.kind in _VALUE_KINDS

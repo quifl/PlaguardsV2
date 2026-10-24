@@ -12,3 +12,10 @@ plaguardsv2/GeoLite2/
 
 # Personal scratch notes - contains live API keys, never publish.
 tests/test_and_notes.md
+
+# Offline CyberChef release, fetched by tools/fetch_cyberchef.py.
+plaguardsv2/PlagWeb/cyberchef/
+plaguardsv2/PlagWeb/cyberchef.staging/
+
+# Output of tools/qa_everything.py: dummy samples, reports, QA-REPORT.md.
+qa-output/

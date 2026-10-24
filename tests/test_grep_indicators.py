@@ -42,7 +42,7 @@ def _one(findings, type_, value):
     return next(f for f in findings if f.type == type_ and f.value == value)
 
 
-# --- C1: IPv6 -------------------------------------------------------------
+# C1: IPv6
 
 def test_extracts_full_and_compressed_ipv6():
     script = ("$a = '2001:0db8:0000:0000:0000:0000:0000:0001'\n"
@@ -63,9 +63,8 @@ def test_extracts_ipv4_mapped_ipv6():
 def test_extracts_bracketed_ipv6_endpoint_and_its_bare_address():
     findings = ioc_extractor.scan("", "$c2 = '[2001:db8:85a3::8a2e:370:7334]:8443'")
     assert "[2001:db8:85a3::8a2e:370:7334]:8443" in _values_of(findings, "ipv6_port")
-    # The bare address is added alongside so geolocation has something it can
-    # resolve - PlagGeo strips a port with rsplit(":"), which a bracketed
-    # address would turn into garbage.
+    # The bare address is added too: PlagGeo strips a port with rsplit(":"),
+    # which garbles a bracketed address.
     assert "2001:db8:85a3::8a2e:370:7334" in _values_of(findings, "ip")
 
 
@@ -97,7 +96,7 @@ def test_ipv6_does_not_fire_on_clocks_or_mac_addresses():
     assert _values_of(ioc_extractor.scan("", script), "ip") == set()
 
 
-# --- C2: cryptocurrency wallets ------------------------------------------
+# C2: cryptocurrency wallets
 
 def test_extracts_bitcoin_addresses_in_all_three_forms():
     script = (f"$a = '{BTC_P2PKH}'\n$b = '{BTC_P2SH}'\n"
@@ -147,7 +146,7 @@ def test_wallet_does_not_fire_on_ordinary_identifiers():
     assert _values_of(ioc_extractor.scan("", script), "crypto_wallet") == set()
 
 
-# --- C3: Windows and UNC paths -------------------------------------------
+# C3: Windows and UNC paths
 
 def test_extracts_local_windows_paths():
     script = ("$drop = 'C:\\Users\\Public\\Documents\\stage.dat'\n"
@@ -194,7 +193,7 @@ def test_path_prefix_is_collapsed_into_the_longer_path():
     assert "C:\\Users\\Public" not in paths
 
 
-# --- C4: named persistence artefacts -------------------------------------
+# C4: named persistence artefacts
 
 def test_extracts_scheduled_task_names():
     script = ("schtasks /create /tn \"UpdaterSvcTask\" /tr calc /sc minute\n"
@@ -242,7 +241,7 @@ def test_cmdlet_task_registration_is_its_own_signature():
     assert "Scheduled task registration via cmdlet" in _values_of(findings, "signature")
 
 
-# --- C5: residual Base64 --------------------------------------------------
+# C5: residual Base64
 
 def test_undecodable_base64_blob_is_reported_as_informational():
     blob = base64.b64encode(bytes(range(256))).decode()
@@ -278,7 +277,7 @@ def test_monero_address_is_not_double_reported_as_a_base64_blob():
     assert _values_of(findings, "base64_blob") == set()
 
 
-# --- defanging ------------------------------------------------------------
+# defanging
 
 def test_new_types_survive_the_defanging_path():
     # Colon-separated indicators need `[:]`, not the dot bracketing used for
@@ -317,7 +316,7 @@ def test_ipv4_port_defang_is_unchanged_by_the_ipv6_branch():
         "hxxp://a[.]example[.]invalid:8080/x"
 
 
-# --- C6: backtracking safety ---------------------------------------------
+# C6: backtracking safety
 
 def test_patterns_do_not_backtrack_catastrophically():
     """Each pattern against the input shaped to make it backtrack.
@@ -381,3 +380,25 @@ def test_scan_stays_linear_on_a_pathological_document():
 
 def test_empty_input_still_produces_no_findings():
     assert ioc_extractor.scan("", "") == []
+
+
+def test_a_literal_a_string_transform_consumes_is_not_an_indicator():
+    """'maliciouample.invalid'.Insert(8,'s.ex') never contacts
+    "maliciouample.invalid" - it builds a different host. Reporting the
+    ingredient puts a domain that appears nowhere in the sample into the
+    report with the same confidence as a real one."""
+    source = "$d = 'maliciouample.invalid'.Insert(8,'s.ex')"
+    resolved = "$d = 'malicious.example.invalid'"
+    values = {f.value for f in ioc_extractor.scan(source, resolved)}
+    assert "malicious.example.invalid" in values
+    assert "maliciouample.invalid" not in values
+
+
+def test_but_an_unresolved_transform_still_yields_its_receiver():
+    """The masking above is only safe because of this: when the call cannot
+    be folded, it survives deobfuscation verbatim and the receiver is still
+    scanned there. Without it, suppressing the ingredient would lose the only
+    evidence the sample had."""
+    unresolved = "$d = 'maliciouample.invalid'.Insert($args[0],'s.ex')"
+    values = {f.value for f in ioc_extractor.scan(unresolved, unresolved)}
+    assert "maliciouample.invalid" in values

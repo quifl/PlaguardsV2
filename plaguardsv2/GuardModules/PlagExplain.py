@@ -7,6 +7,12 @@ entry is paired with what the technique is and why an author would use it.
 from __future__ import annotations
 
 EXPLANATIONS = [
+    # First, because its detail lists recipe steps that would match broader needles below.
+    ("CyberChef-style recipe",
+     "An encoded run no dedicated decoder reached was opened by trying "
+     "CyberChef's decoders in combination (Base32/58/64/85, hex, decimal, "
+     "binary, URL, HTML entities, compression, XOR, ROT) until it read as "
+     "text. The recipe is named so it can be repeated in CyberChef."),
     ("EncodedCommand",
      "PowerShell was invoked with a Base64-encoded command block, so the real "
      "script never appears in the command line."),
@@ -20,7 +26,7 @@ EXPLANATIONS = [
      "Adjacent string literals were joined. Splitting a word across several "
      "literals defeats signatures that look for it whole."),
     ("-join",
-     "An array of literals was joined into one string - another way to spell "
+     "An array of literals was joined into one string, another way to spell "
      "out a keyword without it appearing literally."),
     ("-f format",
      "The format operator was resolved. Its placeholders let an author write "
@@ -33,7 +39,7 @@ EXPLANATIONS = [
      "script."),
     ("backtick",
      "Backticks were removed. PowerShell ignores them inside a token, so "
-     "they are inserted purely to break up recognisable names."),
+     "they are inserted purely to break up recognizable names."),
     ("$ShellId",
      "$ShellId was replaced with its fixed built-in value; indexing into it "
      "is a common way to spell short commands such as IEX."),
@@ -49,13 +55,70 @@ EXPLANATIONS = [
      "Assignments were followed in order so each variable's real value could "
      "be reconstructed, including values built up over several steps."),
     ("Variable tracing: reconstructed",
-     "Interpolated strings were rebuilt once their variables were known - "
-     "this is usually where the payload's real output becomes visible."),
+     "Interpolated strings were rebuilt once their variables were known. "
+     "This is usually where the payload's real output becomes visible."),
     ("truncated",
      "The input exceeded the size limit and was cut short before analysis."),
     ("JScript string method chain",
      "A chain of JScript string methods (e.g. .replace(), .split(), .concat()) "
      "run on literal values was resolved to its result."),
+    # Appended rather than interleaved: explain() returns the first needle that
+    # matches, so the entries above keep priority over these broader ones.
+    ("line-wrapped Base64",
+     "A Base64 run split across several lines was joined back together. .NET "
+     "ignores the whitespace, so breaking a blob up changes nothing except "
+     "whether a scanner recognizes it as one value."),
+    ("percent-encoded",
+     "Percent-encoding (%68%74%74%70) was decoded back to text. It is valid in "
+     "a URL, which lets a whole address be written without any of its "
+     "recognizable words appearing."),
+    ("$env:",
+     "Well-known environment variables were replaced with their standard "
+     "Windows values, since commands are often spelled by slicing characters "
+     "out of them rather than written out."),
+    ("subexpressions",
+     "$(...) subexpressions were collapsed to the value they produce, so a "
+     "string assembled inside one reads as the text it becomes."),
+    ("literal expressions",
+     "Arithmetic and other constant expressions were evaluated, which is how "
+     "a character code written as a sum becomes a letter again."),
+    ("assignments to their values",
+     "Each variable was replaced by the value assigned to it, so the script "
+     "reads as what it does rather than as a chain of indirection."),
+    ("[string] cast",
+     "Redundant [string] casts were removed. They change nothing at runtime "
+     "and are added to make a line harder to read."),
+    ("standalone encoded payload",
+     "A line that was nothing but an encoded blob, with no surrounding code "
+     "to hook into, was decoded in place and annotated with its plaintext."),
+    ("XOR-decoded",
+     "A byte array was recovered by applying the XOR key the script itself "
+     "uses, turning the loader's data back into its payload."),
+    ("VBScript Chr(",
+     "VBScript Chr() calls were converted back to characters: the VBScript "
+     "equivalent of writing letters as numbers."),
+    ("VBScript & concatenation",
+     "VBScript string concatenation (&) was folded, joining pieces that were "
+     "split to keep any whole keyword from appearing."),
+    ("VBScript string call",
+     "VBScript string functions (Mid, Left, Right, Replace) over literals were "
+     "resolved to their result."),
+    ("VBScript literal variable",
+     "VBScript variables holding constants were substituted with their value."),
+    ("String.fromCharCode",
+     "String.fromCharCode sequences were converted back to text: the "
+     "JavaScript way of spelling a string as numbers."),
+    ("JScript escape/atob",
+     "JScript escape sequences and atob()/Base64 literals were decoded back to "
+     "readable text."),
+    ("JScript + concatenation",
+     "JScript string concatenation (+) over literals was folded into the "
+     "single value it produces."),
+    ("JScript literal variable",
+     "JScript variables holding constants were substituted with their value."),
+    ("batch variable",
+     "Batch %VAR% references were expanded, including the substring form "
+     "(%VAR:~2,3%) used to spell a command out of an existing value."),
     ("IOC check",
      "Extracted indicators were looked up against whichever threat-intel "
      "providers are configured in Settings; a provider with no key is simply "

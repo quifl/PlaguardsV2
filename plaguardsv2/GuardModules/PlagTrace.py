@@ -14,6 +14,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
+from . import PlagScan
 from .PlagEval import UNKNOWN, evaluate, expand_double_quoted
 
 MAX_STATEMENTS = 5000
@@ -41,6 +42,9 @@ def split_statements(text: str) -> list[str]:
     return [stripped for stripped, _sep in scan_statements(text) if stripped]
 
 
+_STATEMENT_STOP_RE = re.compile(r"['\"(\[{)\]};\n]")
+
+
 def scan_statements(text: str) -> list[tuple[str, str]]:
     """Split on ';' and newlines, but only at top level - separators inside
     quotes, brackets, parens or braces don't split.
@@ -53,49 +57,33 @@ def scan_statements(text: str) -> list[tuple[str, str]]:
     buf = []
     depth = 0
     i, n = 0, len(text)
-    quote = None
     while i < n:
-        c = text[i]
-        if quote:
-            buf.append(c)
-            if quote == '"' and c == "`" and i + 1 < n:
-                buf.append(text[i + 1])
-                i += 2
-                continue
-            if c == quote:
-                if i + 1 < n and text[i + 1] == quote:
-                    buf.append(text[i + 1])
-                    i += 2
-                    continue
-                quote = None
-            i += 1
-            continue
-
+        # Copy ordinary text in one slice up to the next character that matters.
+        stop = _STATEMENT_STOP_RE.search(text, i)
+        if stop is None:
+            buf.append(text[i:])
+            break
+        k = stop.start()
+        if k > i:
+            buf.append(text[i:k])
+        c = text[k]
         if c in ("'", '"'):
-            quote = c
-            buf.append(c)
-            i += 1
+            end = PlagScan.literal_end(text, k)
+            buf.append(text[k:end])
+            i = end
             continue
-
         if c in "([{":
             depth += 1
             buf.append(c)
-            i += 1
-            continue
-        if c in ")]}":
+        elif c in ")]}":
             depth = max(0, depth - 1)
             buf.append(c)
-            i += 1
-            continue
-
-        if depth == 0 and (c == ";" or c == "\n"):
+        elif depth == 0:
             statements.append(("".join(buf).strip(), c))
             buf = []
-            i += 1
-            continue
-
-        buf.append(c)
-        i += 1
+        else:
+            buf.append(c)
+        i = k + 1
 
     if buf:
         statements.append(("".join(buf).strip(), ""))

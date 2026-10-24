@@ -14,6 +14,8 @@ import re
 import zlib
 from urllib.parse import unquote
 
+from . import PlagMagic
+
 MIN_B64_LEN = 20
 _PRINTABLE = set(range(32, 127)) | {9, 10, 13}
 
@@ -102,10 +104,10 @@ def decode_char_codes(value: str) -> str | None:
 def decode_payload(value: str) -> tuple[str, str] | None:
     """Is this resolved value *itself* still encoded?
 
-    Returns `(how, plaintext)` for a value that is a character-code list or a
-    Base64 blob, so a variable holding one stage of a peel can show what it
-    actually contains instead of a wall of digits. None when it is already
-    plain, or when decoding produces something unreadable.
+    Returns `(how, plaintext)` for a character-code list, a Base64 blob, or
+    any single token PlagMagic finds a recipe for, so a variable holding one
+    stage of a peel shows what it contains instead of a wall of digits. None
+    when it is already plain, or when decoding produces something unreadable.
     """
     value = (value or "").strip()
     if not value or len(value) > 200_000:
@@ -115,11 +117,21 @@ def decode_payload(value: str) -> tuple[str, str] | None:
     if text and text != value:
         return "character codes", text
 
+    b64_text = None
     if _B64_RE.match(value):
-        text = decode_base64(value)
-        if text and text != value:
-            return "base64", text
-    return None
+        b64_text = decode_base64(value)
+        if b64_text == value:
+            b64_text = None
+        # Printable is not readable: XOR'd bytes pass the printable bar too.
+        if b64_text and PlagMagic.readable(b64_text):
+            return "base64", b64_text
+
+    # One token, or a Base64 blob, goes to the recipe search; code with spaces does not.
+    if b64_text or not re.search(r"\s", value):
+        result = PlagMagic.magic(value)
+        if result is not None:
+            return result.short_label, result.output.strip()
+    return ("base64", b64_text) if b64_text else None
 
 
 def decode_percent(text: str) -> str | None:

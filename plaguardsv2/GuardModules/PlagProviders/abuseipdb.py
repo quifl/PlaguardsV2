@@ -1,7 +1,7 @@
 """AbuseIPDB API v2 client - IP reputation only."""
 from __future__ import annotations
 
-from .base import explain_http, safe_json_request
+from .base import brief, compose, http_verdict, safe_json_request
 
 SUPPORTS = {"ip"}
 _URL = "https://api.abuseipdb.com/api/v2/check"
@@ -21,7 +21,7 @@ def lookup(finding_type: str, value: str, api_key: str | None) -> dict:
     if err:
         return {"verdict": "error", "detail": f"AbuseIPDB request failed: {err}"}
     if status != 200 or body is None:
-        return {"verdict": "error", "detail": explain_http("AbuseIPDB", status)}
+        return http_verdict("AbuseIPDB", status)
 
     data = body.get("data", {})
     score = data.get("abuseConfidenceScore", 0)
@@ -37,5 +37,22 @@ def lookup(finding_type: str, value: str, api_key: str | None) -> dict:
     else:
         verdict = "unknown"
 
-    detail = f"Abuse confidence {score}%, {total_reports} report(s), country {country}"
-    return {"verdict": verdict, "detail": detail}
+    # All of this is already in the /check response the score came from.
+    # Usage type, reporter count and date are what the score cannot say.
+    reporters = data.get("numDistinctUsers") or 0
+    reports = f"{total_reports} report(s)"
+    if reporters > 1:
+        reports += f" from {reporters} reporters"
+    last_seen = (data.get("lastReportedAt") or "")[:10]
+
+    return {"verdict": verdict, "detail": compose(
+        f"Abuse confidence {score}%",
+        reports,
+        f"last reported {last_seen}" if last_seen else "",
+        f"country {country}",
+        data.get("usageType") or "",
+        f"ISP: {data['isp']}" if data.get("isp") else "",
+        brief(data.get("hostnames") or [], limit=2),
+        "Tor exit node" if data.get("isTor") else "",
+        "whitelisted by AbuseIPDB" if data.get("isWhitelisted") else "",
+    )}

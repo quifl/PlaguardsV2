@@ -100,11 +100,8 @@ def get_conn(db_path: Path | str | None = None) -> sqlite3.Connection:
     conn = sqlite3.connect(str(path), check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
-    # Without this, a writer that finds the database locked (a concurrent
-    # batch upload, e.g.) fails immediately instead of waiting its turn - and
-    # batch analysis is explicitly meant to stay correct under concurrent
-    # writes. This makes it retry for up to 5s before giving up, rather than
-    # turning ordinary lock contention into spurious per-file failures.
+    # Waits up to 5s on a locked database instead of failing at once, so ordinary
+    # contention from a concurrent batch doesn't become per-file failures.
     conn.execute("PRAGMA busy_timeout = 5000")
     conn.executescript(SCHEMA)
     _ensure_column(conn, "analyses", "source_kind", "TEXT NOT NULL DEFAULT 'pasted'")
@@ -195,10 +192,8 @@ def get_analysis(conn: sqlite3.Connection, analysis_id: int) -> dict | None:
     analysis = dict(row)
     analysis["pass_log"] = json.loads(analysis["pass_log"])
     analysis["truncated"] = bool(analysis["truncated"])
-    # Canonical aliases: an analysis loaded from the database must have the
-    # same shape as the in-memory one PlagEngine returns, otherwise the
-    # templates and PlagReport (which read `original`/`deobfuscated`) render
-    # empty script bodies for stored analyses.
+    # Aliases so a stored analysis has the same shape as a fresh one; the templates
+    # read `original`/`deobfuscated` and would render empty bodies otherwise.
     analysis["original"] = analysis["original_text"]
     analysis["deobfuscated"] = analysis["deobfuscated_text"]
     # Rows written before this column existed only have the formatted text.
@@ -256,12 +251,8 @@ def prune_old_analyses(conn: sqlite3.Connection, keep: int) -> int:
     return len(ids)
 
 
-# --- Batches ----------------------------------------------------------------
-# A batch (zip or multi-file upload) is tracked as its own row so History can
-# show "one entry, 50 files" instead of 50 unrelated-looking rows. Kept
-# separate from the analyses helpers above, which stay exactly as they were -
-# list_analyses()/prune_old_analyses() are also used by the CLI, which has no
-# concept of a batch and must keep seeing a flat list of files.
+# Batches: a zip or multi-file upload is one row, so History shows "one entry,
+# 50 files". list_analyses() stays flat because the CLI has no batch concept.
 
 def create_batch(conn: sqlite3.Connection, batch_filename: str, started_at: float) -> int:
     cur = conn.execute(
@@ -318,10 +309,8 @@ def list_history(conn: sqlite3.Connection, limit: int = 50) -> list[dict]:
         b["kind"] = "batch"
         b["finding_count"] = sum(f["finding_count"] or 0 for f in b["files"])
         b["high_count"] = sum(f["high_count"] or 0 for f in b["files"])
-        # Sorts alongside standalone analyses' created_at (their own
-        # completion moment - save_analysis writes it at the very end of the
-        # pipeline). completed_at is briefly NULL while a batch is still
-        # being processed; started_at is the best ordering signal until then.
+        # Sorts with standalone analyses' created_at. completed_at is NULL while a
+        # batch is still running, so started_at stands in until then.
         b["created_at"] = b["completed_at"] if b["completed_at"] is not None else b["started_at"]
         rows.append(b)
 

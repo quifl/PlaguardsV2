@@ -9,15 +9,53 @@ from pathlib import Path
 from flask import Flask, Response, flash, g, jsonify, redirect, render_template, request, url_for
 
 from ..GuardModules import PlagBatch, PlagConfig, PlagEngine, PlagFilter, PlagGrep, PlagIntel, PlagReport
-from ..GuardModules import PlagGeo, PlagLinks, PlagStore, PlagTable
+from ..GuardModules import PlagGeo, PlagLinks, PlagMagic, PlagStore, PlagTable
+from . import cyberchef
 
 VALID_STATUSES = {"confirmed_threat", "false_positive", "unreviewed", "unknown"}
+
+
+def _ids(values) -> list[int]:
+    """Analysis ids from a form list or a comma-separated string, junk dropped."""
+    if isinstance(values, str):
+        values = values.split(",")
+    return [int(v) for v in values if str(v).strip().isdigit()]
+
+
+def _plural(count: int, noun: str, plural: str | None = None) -> str:
+    return f"{count} {noun if count == 1 else (plural or noun + 's')}"
+# The analysis page lists at most this many encoded runs.
+MAX_ENCODED_RUNS = 25
+
+
+def _encoded_runs(text: str) -> list[dict]:
+    """Encoded runs left in the deobfuscated script, each with the recipe that
+    opens it, for the analysis page's CyberChef panel."""
+    rows = []
+    for run, result in PlagMagic.survey(text)[:MAX_ENCODED_RUNS]:
+        rows.append({
+            "run": run,
+            "preview": run if len(run) <= 56 else run[:56] + "…",
+            "length": len(run),
+            "label": result.label if result else "",
+            "recipe": result.recipe() if result else None,
+            # Defanged like every other value on the page.
+            "output": PlagGrep.defang_text(result.output.strip()[:160]) if result else "",
+        })
+    return rows
 
 
 def create_app(db_path: str | None = None) -> Flask:
     app = Flask(__name__)
     app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "dev-only-change-me")
     app.config["DB_PATH"] = db_path
+    cyberchef.register(app)
+
+    @app.errorhandler(404)
+    def not_found(_error):
+        return render_template("404.html"), 404
+
+    app.add_template_filter(_plural, "plural")
 
     @app.template_filter("timestamp_to_str")
     def timestamp_to_str(ts, fmt: str = "%Y-%m-%d %H:%M"):
@@ -106,44 +144,44 @@ def create_app(db_path: str | None = None) -> Flask:
 
             if not batch:
                 detail = f" Skipped: {', '.join(skipped)}." if skipped else ""
-                flash("Nothing analysable in that upload." + detail, "error")
+                flash("Nothing to analyze in that upload." + detail, "error")
                 return redirect(url_for("index"))
 
-            # A single uploaded .zip gets its own name as the batch's label;
-            # anything else - several loose files, possibly mixed with zips -
-            # has no one natural name, so it's described by count instead.
+            # A lone .zip names the batch; several files, possibly mixed with zips, have
+            # no natural name, so they are described by count.
             if len(uploads) == 1 and PlagBatch.is_zip(uploads[0].filename):
                 batch_label = PlagFilter.sanitize_filename(uploads[0].filename)
             else:
-                batch_label = f"{len(batch)} file" + ("" if len(batch) == 1 else "s")
+                batch_label = _plural(len(batch), "file")
 
             outcome = PlagEngine.run_batch_analysis(
                 batch, batch_label, conn, skip_intel=skip_intel,
             )
             created = outcome["created_ids"]
 
+            # Only a lone file that never became a batch goes straight to its result page.
+            if outcome["batch_id"] is None and len(created) == 1:
+                if skipped:
+                    flash(f"Skipped {len(skipped)}: {', '.join(skipped[:6])}"
+                          + (" …" if len(skipped) > 6 else ""), "error")
+                return redirect(url_for("view_analysis", analysis_id=created[0]))
+
+            # The combined report opens in a viewer page with no flash area, so a
+            # message queued here would surface later on an unrelated page.
+            if request.form.get("batch_report") == "combined" and created:
+                return redirect(url_for("batch_report_view",
+                                        ids=",".join(str(i) for i in created)))
+
             if skipped:
                 flash(f"Skipped {len(skipped)}: {', '.join(skipped[:6])}"
                       + (" …" if len(skipped) > 6 else ""), "error")
-
-            # Only a genuinely lone file (never made into a batch) goes
-            # straight to its own result page - the same as before this
-            # feature existed.
-            if outcome["batch_id"] is None and len(created) == 1:
-                return redirect(url_for("view_analysis", analysis_id=created[0]))
-
             limit = PlagConfig.get_history_limit(conn)
             note = ""
             if len(created) > limit:
-                note = (f" Only the {limit} most recent are kept - raise the history "
-                        f"limit in Settings if you need more.")
+                note = (f" Only the {limit} most recent are kept; raise the history "
+                        f"limit in Settings to keep more.")
             fail_note = f" {outcome['failed_count']} failed." if outcome["failed_count"] else ""
-            flash(f"Analyzed {len(created)} file(s).{fail_note}{note}", "success")
-
-            # A batch can go straight to one merged PDF instead of the list.
-            if request.form.get("batch_report") == "combined":
-                return redirect(url_for("batch_report_view",
-                                        ids=",".join(str(i) for i in created)))
+            flash(f"Analyzed {_plural(len(created), 'file')}.{fail_note}{note}", "success")
             return redirect(url_for("history", selected=",".join(str(i) for i in created)))
 
         text = request.form.get("script_text", "")
@@ -196,10 +234,8 @@ def create_app(db_path: str | None = None) -> Flask:
             finding = PlagGrep.Finding(type=ioc_type, value=refanged)
             conn = get_db()
             PlagIntel.enrich([finding], conn=conn, use_cache=True)
-            # Every provider that supports this indicator type is shown, not
-            # just the ones that returned a verdict - a provider with no key
-            # configured is "not checked", not invisible. Checked providers
-            # sort first so the real answers aren't buried under those.
+            # Every provider supporting this type is shown; one with no key is "not
+            # checked", not invisible. Checked providers sort first.
             scope = finding.intel.get("scope")
             results = [
                 {
@@ -256,6 +292,10 @@ def create_app(db_path: str | None = None) -> Flask:
         return render_template(
             "result.html", analysis=data,
             resolved_display=resolved_display, intel_labels=intel_labels,
+            encoded_runs=_encoded_runs(data.get("deobfuscated") or ""),
+            # Split as the report splits them: a note about the run is not a transform.
+            transforms=PlagReport._transform_entries(data.get("pass_log") or []),
+            run_notes=PlagReport._status_entries(data.get("pass_log") or []),
         )
 
     @app.route("/analysis/<int:analysis_id>/finding/<int:finding_id>/triage", methods=["POST"])
@@ -315,6 +355,8 @@ def create_app(db_path: str | None = None) -> Flask:
         Serving the PDF straight from this URL leaves the browser to name the
         tab after the last path segment ("view") with its own generic icon;
         an HTML shell gets the report a real title and the Plaguards mark."""
+        if PlagStore.get_analysis(get_db(), analysis_id) is None:
+            return render_template("404.html"), 404
         return render_template(
             "report_view.html",
             report_title=f"Plaguards Report {analysis_id}",
@@ -345,16 +387,12 @@ def create_app(db_path: str | None = None) -> Flask:
         if data is None:
             return render_template("404.html"), 404
 
-        geo = {}
-        for finding in data["findings"]:
-            if finding.get("type") not in ("ip", "ip_port"):
-                continue
-            host = str(finding.get("value", "")).rsplit(":", 1)[0] \
-                if finding.get("type") == "ip_port" else str(finding.get("value", ""))
-            if host and host not in geo:
-                geo[host] = PlagGeo.locate(host, conn)
-
-        rows = PlagTable.build_rows(data, geo)
+        hosts = [
+            str(finding.get("value", "")).rsplit(":", 1)[0] if finding.get("type") == "ip_port"
+            else str(finding.get("value", ""))
+            for finding in data["findings"] if finding.get("type") in ("ip", "ip_port")
+        ]
+        rows = PlagTable.build_rows(data, PlagGeo.locate_many(hosts, conn))
         stem = f"plaguardsv2-findings-{analysis_id}"
         if fmt == "csv":
             # Bare mimetype only: Flask appends "; charset=utf-8" to any
@@ -362,7 +400,7 @@ def create_app(db_path: str | None = None) -> Flask:
             payload, mimetype = PlagTable.to_csv(rows), "text/csv"
         else:
             if not PlagTable.xlsx_available():
-                flash("Excel export needs openpyxl - install it, or use CSV.", "error")
+                flash("Excel export needs openpyxl. Install it, or use CSV.", "error")
                 return redirect(url_for("view_analysis", analysis_id=analysis_id))
             payload = PlagTable.to_xlsx(rows, title=f"Analysis {analysis_id}")
             mimetype = ("application/vnd.openxmlformats-officedocument"
@@ -380,9 +418,8 @@ def create_app(db_path: str | None = None) -> Flask:
         selected = {
             int(i) for i in (request.args.get("selected") or "").split(",") if i.isdigit()
         }
-        # A batch just analyzed arrives here with all its member ids in
-        # `selected` - auto-open its row so the result is immediately visible
-        # instead of sitting behind one more click.
+        # A batch just analyzed arrives with its member ids in `selected`, so its row
+        # opens automatically.
         open_batches = {
             row["id"] for row in rows
             if row["kind"] == "batch" and any(f["id"] in selected for f in row["files"])
@@ -394,12 +431,18 @@ def create_app(db_path: str | None = None) -> Flask:
 
     @app.route("/history/report/view")
     def batch_report_view():
-        """Wrapper page for the combined report - see view_report."""
-        ids = [i for i in (request.args.get("ids") or "").split(",") if i.isdigit()]
-        label = ", ".join(ids[:4]) + (" +" if len(ids) > 4 else "")
+        """Wrapper page for the combined report; see view_report."""
+        conn = get_db()
+        # Checked here, not only in batch_report: the PDF route redirects to
+        # History on failure, which would then render inside the viewer.
+        ids = [i for i in _ids(request.args.get("ids") or "")
+               if PlagStore.get_analysis(conn, i) is not None]
+        if not ids:
+            return render_template("404.html"), 404
+        label = ", ".join(map(str, ids[:4])) + (" +" if len(ids) > 4 else "")
         return render_template(
             "report_view.html",
-            report_title=f"Plaguards Report {label}" if ids else "Plaguards Report",
+            report_title=f"Plaguards Report {label}",
             pdf_url=url_for("batch_report", **request.args.to_dict()),
         )
 
@@ -408,7 +451,7 @@ def create_app(db_path: str | None = None) -> Flask:
         """One combined PDF for a list of ids, reachable by GET so a batch run
         can redirect straight to it."""
         conn = get_db()
-        ids = [int(i) for i in (request.args.get("ids") or "").split(",") if i.isdigit()]
+        ids = _ids(request.args.get("ids") or "")
         analyses = [a for a in (PlagStore.get_analysis(conn, i) for i in ids) if a]
         if not analyses:
             flash("Nothing to report on.", "error")
@@ -428,10 +471,13 @@ def create_app(db_path: str | None = None) -> Flask:
 
     @app.route("/history/bulk-delete", methods=["POST"])
     def bulk_delete():
-        ids = [int(i) for i in request.form.getlist("analysis_id")]
+        ids = _ids(request.form.getlist("analysis_id"))
+        if not ids:
+            flash("Select at least one analysis to delete.", "error")
+            return redirect(url_for("history"))
         conn = get_db()
         removed = PlagStore.delete_analyses(conn, ids)
-        flash(f"Deleted {removed} analysis(es).", "success")
+        flash(f"Deleted {_plural(removed, 'analysis', 'analyses')}.", "success")
         return redirect(url_for("history"))
 
     @app.route("/history/bulk-export", methods=["POST"])
@@ -439,19 +485,19 @@ def create_app(db_path: str | None = None) -> Flask:
         import io
         import zipfile
 
-        ids = [int(i) for i in request.form.getlist("analysis_id")]
+        ids = _ids(request.form.getlist("analysis_id"))
         redact_iocs = request.form.get("redact", "0") == "1"
         conn = get_db()
         analyst_name = PlagConfig.get_analyst_name(conn)
         utc_offset = PlagConfig.get_utc_offset(conn)
+        analyses = [a for a in (PlagStore.get_analysis(conn, i) for i in ids) if a]
+        if not analyses:
+            flash("Select at least one analysis to export.", "error")
+            return redirect(url_for("history"))
 
         # One document covering everything selected, rather than a zip of
         # separate PDFs.
         if request.form.get("combined") == "1":
-            analyses = [a for a in (PlagStore.get_analysis(conn, i) for i in ids) if a]
-            if not analyses:
-                flash("Select at least one analysis to export.", "error")
-                return redirect(url_for("history"))
             pdf_bytes = PlagReport.render_combined_pdf(
                 analyses, analyst_name=analyst_name, utc_offset=utc_offset,
                 redact_iocs=redact_iocs, conn=conn,
@@ -465,15 +511,12 @@ def create_app(db_path: str | None = None) -> Flask:
 
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-            for analysis_id in ids:
-                data = PlagStore.get_analysis(conn, analysis_id)
-                if data is None:
-                    continue
+            for data in analyses:
                 pdf_bytes = PlagReport.render_pdf(
                     data, analyst_name=analyst_name, utc_offset=utc_offset,
                     redact_iocs=redact_iocs, conn=conn,
                 )
-                zf.writestr(f"plaguardsv2-report-{analysis_id}.pdf", pdf_bytes)
+                zf.writestr(f"plaguardsv2-report-{data['id']}.pdf", pdf_bytes)
         buf.seek(0)
         return Response(
             buf.getvalue(),
@@ -492,29 +535,58 @@ def create_app(db_path: str | None = None) -> Flask:
             form_type = request.form.get("form", "keys")
             if form_type == "general":
                 limit = request.form.get("history_limit", "").strip()
-                if limit.isdigit():
-                    PlagConfig.set_history_limit(conn, int(limit))
-                PlagConfig.set_analyst_name(conn, request.form.get("analyst_name", ""))
                 offset = request.form.get("utc_offset", "").strip()
-                if offset:
-                    try:
-                        PlagConfig.set_utc_offset(conn, float(offset))
-                    except ValueError:
-                        flash("UTC offset must be a number between -12 and +14.", "error")
-                flash("General settings saved.", "success")
+                problems = []
+                if not limit.isdigit() or not 1 <= int(limit) <= 1000:
+                    problems.append("History limit must be a whole number from 1 to 1000.")
+                try:
+                    offset_value = float(offset) if offset else None
+                except ValueError:
+                    offset_value = None
+                if offset and (offset_value is None or not -12 <= offset_value <= 14):
+                    problems.append("UTC offset must be a number from -12 to +14.")
+                # Nothing is saved from a form with a bad field, so the page never
+                # says "saved" about a value it threw away.
+                if problems:
+                    for problem in problems:
+                        flash(problem, "error")
+                else:
+                    PlagConfig.set_history_limit(conn, int(limit))
+                    PlagConfig.set_analyst_name(conn, request.form.get("analyst_name", ""))
+                    if offset_value is not None:
+                        PlagConfig.set_utc_offset(conn, offset_value)
+                    flash("General settings saved.", "success")
             elif form_type == "geoip":
+                missing = []
                 for kind in PlagConfig.GEOIP_DB_KEYS:
-                    PlagConfig.set_geoip_db_path(conn, kind, request.form.get(f"geoip_{kind}_db", ""))
+                    path = request.form.get(f"geoip_{kind}_db", "").strip()
+                    PlagConfig.set_geoip_db_path(conn, kind, path)
+                    if path and PlagGeo.resolve_database(path, kind) is None:
+                        missing.append(kind)
                 flash("Geolocation settings saved.", "success")
+                for kind in missing:
+                    flash(f"No GeoLite2 {PlagGeo.DATABASE_LABELS[kind]} database found at that path; "
+                          f"addresses won't be located from it until one is.", "error")
             elif form_type == "clear_history":
                 PlagStore.delete_all_analyses(conn)
                 flash("All analysis history cleared.", "success")
             else:
+                saved = []
                 for provider in PlagConfig.PROVIDERS:
                     value = request.form.get(provider["id"], "").strip()
                     if value:
                         PlagConfig.set_api_key(conn, provider["id"], value)
-                flash("API keys saved.", "success")
+                        saved.append(provider["label"])
+                removing = request.form.get("remove_key", "")
+                if removing in {p["id"] for p in PlagConfig.PROVIDERS}:
+                    PlagConfig.clear_api_key(conn, removing)
+                    still = PlagConfig.key_source(conn, removing) == "env"
+                    flash(f"Removed the saved {PlagConfig.get_provider_label(removing)} key."
+                          + (" The key in .env still applies." if still else ""), "success")
+                if saved:
+                    flash(f"Saved {_plural(len(saved), 'key')}: {', '.join(saved)}.", "success")
+                elif not removing:
+                    flash("No keys entered, so nothing changed.", "error")
             return redirect(url_for("settings"))
 
         current_keys = PlagConfig.all_keys(conn)
@@ -522,6 +594,9 @@ def create_app(db_path: str | None = None) -> Flask:
             "settings.html",
             providers=PlagConfig.PROVIDERS,
             current_keys=current_keys,
+            key_sources={p["id"]: PlagConfig.key_source(conn, p["id"]) for p in PlagConfig.PROVIDERS},
+            geoip_found={kind: PlagGeo.resolve_database(path, kind)
+                         for kind, path in PlagConfig.get_geoip_db_paths(conn).items()},
             history_limit=PlagConfig.get_history_limit(conn),
             analyst_name=PlagConfig.get_analyst_name(conn),
             utc_offset=PlagConfig.get_utc_offset(conn),

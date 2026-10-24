@@ -37,9 +37,8 @@ def test_large_input_is_truncated_not_crashed():
 
 
 def test_gzip_compressed_base64_literal_auto_inflates():
-    # A base64 blob that decodes to gzip-compressed bytes rather than plain
-    # text (a common way to shrink/obscure a staged payload) should be
-    # transparently inflated as part of the normal FromBase64String pass.
+    # A Base64 blob that decodes to gzip bytes should be inflated transparently
+    # as part of the normal FromBase64String pass.
     payload = "stage2-payload-marker"
     compressed = gzip.compress(payload.encode("utf-8"))
     b64 = base64.b64encode(compressed).decode()

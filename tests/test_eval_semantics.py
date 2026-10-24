@@ -20,7 +20,7 @@ DOMAIN = "malicious.example.invalid"
 IP = "198.51.100.24"
 
 
-# -- A1: hex / binary literals ------------------------------------------------
+# A1: hex / binary literals
 
 def test_hex_literal_is_not_truncated_to_zero():
     # `\d+` matched only the "0" of 0x41, so the byte silently became NUL.
@@ -39,7 +39,7 @@ def test_number_suffix_does_not_swallow_an_identifier():
     assert [(t.kind, t.value) for t in tokens] == [("num", "10"), ("name", "tbsp")]
 
 
-# -- A2: shl / shr / bnot -----------------------------------------------------
+# A2: shl / shr / bnot
 
 def test_shift_operators_resolve():
     assert evaluate("1 -shl 8", {}) == 256
@@ -58,7 +58,7 @@ def test_bnot_is_unary():
     assert evaluate("7 + (-bnot 0)", {}) == 6
 
 
-# -- A3: modulo, disambiguated from the ForEach-Object alias ------------------
+# A3: modulo, disambiguated from the ForEach-Object alias
 
 def test_modulo_resolves():
     assert evaluate("65 % 10", {}) == 5
@@ -82,7 +82,7 @@ def test_percent_after_a_pipe_lexes_as_punctuation():
     assert ("op", "%") in {(t.kind, t.value) for t in PlagTokens.tokenize("$a % 3")}
 
 
-# -- A4: -replace is a regex, and case-insensitive by default -----------------
+# A4: -replace is a regex, and case-insensitive by default
 
 def test_replace_operator_uses_regex():
     assert evaluate("'a1b2c3' -replace '[0-9]',''", {}) == "abc"
@@ -117,7 +117,7 @@ def test_replace_folds_a_defanged_indicator():
     assert evaluate("'malicious[.]example[.]invalid' -replace '\\[\\.\\]','.'", {}) == DOMAIN
 
 
-# -- A5: ReDoS structural guards ---------------------------------------------
+# A5: ReDoS structural guards
 
 def test_nested_quantifier_pattern_returns_unknown_quickly():
     target = "a" * 40 + "!"
@@ -143,7 +143,7 @@ def test_ordinary_grouped_pattern_is_not_refused():
     assert evaluate("'2026-09-18' -replace '(\\d+)-(\\d+)-(\\d+)','$3'", {}) == "18"
 
 
-# -- A6: -f format specifiers -------------------------------------------------
+# A6: -f format specifiers
 
 def test_format_specifiers_resolve():
     assert evaluate('"{0:X2}" -f 65', {}) == "41"
@@ -171,7 +171,7 @@ def test_malformed_template_yields_unknown():
     assert evaluate('"{0:X2" -f 65', {}) is UNKNOWN
 
 
-# -- A7: [Convert] beyond FromBase64String ------------------------------------
+# A7: [Convert] beyond FromBase64String
 
 def test_convert_toint32_with_base():
     assert evaluate('[char][Convert]::ToInt32("41",16)', {}) == "A"
@@ -195,7 +195,7 @@ def test_convert_rejects_an_unsupported_base():
     assert evaluate('[Convert]::ToInt32("77",7)', {}) is UNKNOWN
 
 
-# -- A8: postfix indexing -----------------------------------------------------
+# A8: postfix indexing
 
 def test_single_index_returns_one_character():
     # This used to return the whole string, unindexed.
@@ -228,7 +228,7 @@ def test_indexing_a_list_variable():
     assert evaluate("$parts[1]", {"parts": ["a", IP, "c"]}) == IP
 
 
-# -- A9: the string method set, and the -replace / .Replace distinction -------
+# A9: the string method set, and the -replace / .Replace distinction
 
 def test_replace_method_stays_literal():
     # String.Replace is ordinal; only the -replace OPERATOR is a regex. A
@@ -276,7 +276,7 @@ def test_method_chain_on_a_decoded_byte_array():
     assert evaluate(expr, {}) == "ABC"
 
 
-# -- end-to-end idioms the fixes exist to resolve -----------------------------
+# end-to-end idioms the fixes exist to resolve
 
 def test_hex_pair_decoder_resolves_to_a_domain():
     pairs = ",".join(f"{ord(c):02X}" for c in DOMAIN)

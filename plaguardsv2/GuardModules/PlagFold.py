@@ -12,6 +12,7 @@ Unknown and is left exactly as written.
 """
 from __future__ import annotations
 
+import bisect
 import re
 
 from . import PlagEval
@@ -71,7 +72,10 @@ def _string_spans(text: str) -> list[tuple[int, int]]:
 
 
 def _in_spans(index: int, spans: list[tuple[int, int]]) -> bool:
-    return any(start <= index < end for start, end in spans)
+    # Spans are sorted and disjoint, so only the last one starting at or before
+    # `index` can hold it; a linear scan made large scripts quadratic.
+    k = bisect.bisect_right(spans, (index, float("inf"))) - 1
+    return k >= 0 and spans[k][0] <= index < spans[k][1]
 
 
 def _match_paren(text: str, open_at: int) -> int | None:
@@ -124,9 +128,8 @@ def fold_expressions(text: str, variables: dict | None = None):
         end = _match_paren(text, start)
         if end is None or end - start > MAX_GROUP_LEN:
             continue
-        # A group butted straight up against a name, a cast or a dot is
-        # somebody's argument list; folding it would leave `GetString'abc'`.
-        # `Write-Host (expr)` has a space, so free-standing groups still fold.
+        # A group glued to a name, cast or dot is an argument list; folding it would
+        # leave `GetString'abc'`. `Write-Host (expr)` has a space, so it still folds.
         prev = text[start - 1] if start else ""
         if prev.isalnum() or prev in "]._":
             continue
@@ -141,7 +144,6 @@ def fold_expressions(text: str, variables: dict | None = None):
             continue
         text = text[:at] + literal + text[end:]
         folded += 1
-        spans = _string_spans(text)
 
     if not folded:
         return text, False, ""
@@ -217,9 +219,8 @@ def fold_assignments(text: str):
             reduced, changed, _detail = fold_expressions(statement, variables)
             if changed:
                 replacement, folded = reduced, folded + 1
-        # The script's own separators go back in: rejoining everything with
-        # newlines would silently reformat the source, and the report shows
-        # the as-deobfuscated text next to the reformatted one.
+        # The script's own separators go back in: rejoining with newlines would
+        # silently reformat the source the report shows beside the prettified one.
         rewritten.append(replacement + separator)
 
     if not folded:

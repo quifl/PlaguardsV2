@@ -7,7 +7,7 @@
 {% if not analyses %}
   <p class="muted">No analyses yet. <a href="{{ url_for('index') }}">Run your first one</a>.</p>
 {% else %}
-<form id="bulkForm" method="post" data-busy-note="Rendering PDFs - this can take a moment for several analyses.">
+<form id="bulkForm" method="post" data-busy-note="Rendering PDFs. Several analyses can take a moment.">
   <div class="bulk-bar">
     <label class="check"><input type="checkbox" id="selectAll" /><span class="check-box"></span><span class="check-label">Select all</span></label>
     <span class="count" id="selectedCount">0 selected</span>
@@ -19,13 +19,22 @@
             onclick="return confirm('Delete the selected analyses? This cannot be undone.');"><i class="bi bi-trash"></i> Delete Selected</button>
   </div>
 
+  {# Scrolls on its own on a narrow screen instead of widening the whole page. #}
+  <div class="table-scroll">
   <table class="history-table">
+    <colgroup>
+      <col class="col-check"><col class="col-id"><col class="col-file">
+      <col class="col-completed"><col class="col-duration"><col class="col-status">
+      <col class="col-findings"><col class="col-high"><col class="col-action">
+    </colgroup>
     <tr>
       <th class="checkbox-cell"></th><th>ID</th><th>File</th><th>Completed</th>
       <th>Duration</th><th>Status</th><th>Findings</th><th>High severity</th><th></th>
     </tr>
     {% for a in analyses %}
     {% if a.kind == "batch" %}
+    {# Batch and file rows are sibling <tr>s of one table, not a layout nested in
+       the File cell, which is what makes the columns genuinely line up. #}
     <tr class="batch-row" id="batch-{{ a.id }}">
       <td class="checkbox-cell">
         <label class="check" title="Select every file in this batch">
@@ -33,35 +42,19 @@
           <span class="check-box"></span>
         </label>
       </td>
-      <td>#{{ a.id }}</td>
+      {# Batches are numbered apart from analyses, so a bare "#1" could mean either. #}
+      <td title="Batch {{ a.id }}">B{{ a.id }}</td>
       <td>
-        <details class="batch-details" {{ "open" if a.id in open_batches }}>
-          <summary>
-            <i class="bi bi-collection"></i> <strong>{{ a.batch_filename }}</strong>
-            <span class="muted">
-              {{ a.total_files }} file{{ "s" if a.total_files != 1 else "" }}
-              &middot; {{ a.successful_files }} successful{% if a.failed_files %} &middot; {{ a.failed_files }} failed{% endif %}
-            </span>
-          </summary>
-          <ul class="batch-file-list">
-            {% for f in a.files %}
-            <li>
-              <label class="check">
-                <input type="checkbox" name="analysis_id" value="{{ f.id }}"
-                       class="row-check batch-child-check" data-batch-of="{{ a.id }}"
-                       {{ "checked" if f.id in selected }} />
-                <span class="check-box"></span>
-              </label>
-              <span class="bf-name">{{ f.filename }}</span>
-              <span class="badge status-{{ f.status }}">{{ f.status|capitalize }}</span>
-              <span class="bf-meta">{{ f.duration_ms|duration_to_str }}</span>
-              <span class="bf-meta">{{ f.completed_at|timestamp_to_str("%d %b %Y, %H:%M:%S") }}</span>
-              <a class="link-chip" href="{{ url_for('view_analysis', analysis_id=f.id) }}"
-                 target="_blank" rel="noopener"><i class="bi bi-box-arrow-up-right"></i> View</a>
-            </li>
-            {% endfor %}
-          </ul>
-        </details>
+        <button type="button" class="batch-toggle" data-batch-toggle="{{ a.id }}"
+                aria-expanded="{{ "true" if a.id in open_batches else "false" }}">
+          <i class="bi bi-chevron-right batch-chevron"></i>
+          <i class="bi bi-collection"></i>
+          <span class="batch-name" title="{{ a.batch_filename }}"><strong>{{ a.batch_filename }}</strong></span>
+          <span class="muted batch-sub">
+            {{ a.total_files }} file{{ "s" if a.total_files != 1 else "" }}
+            &middot; {{ a.successful_files }} successful{% if a.failed_files %} &middot; {{ a.failed_files }} failed{% endif %}
+          </span>
+        </button>
       </td>
       <td>{{ a.completed_at|timestamp_to_str("%d %b %Y, %H:%M:%S") }}</td>
       <td>{{ a.duration_ms|duration_to_str }}</td>
@@ -70,11 +63,32 @@
       <td>{{ a.high_count or 0 }}</td>
       <td>
         {% if a.files %}
-        <a class="link-chip" href="{{ url_for('batch_report_view', ids=a.files|map(attribute='id')|join(',')) }}"
+        <a class="history-action" href="{{ url_for('batch_report_view', ids=a.files|map(attribute='id')|join(',')) }}"
            target="_blank" rel="noopener" data-busy-link="Building your report…"><i class="bi bi-file-earmark-pdf"></i> Combined</a>
         {% endif %}
       </td>
     </tr>
+    {% for f in a.files %}
+    <tr class="batch-child-row" data-batch-of="{{ a.id }}" {{ "" if a.id in open_batches else "hidden" }}>
+      <td class="checkbox-cell"></td>
+      <td class="child-check-cell">
+        <label class="check">
+          <input type="checkbox" name="analysis_id" value="{{ f.id }}"
+                 class="row-check batch-child-check" data-batch-of="{{ a.id }}"
+                 {{ "checked" if f.id in selected }} />
+          <span class="check-box"></span>
+        </label>
+      </td>
+      <td class="child-file"><span class="child-name" title="{{ f.filename }}">{{ f.filename }}</span></td>
+      <td>{{ f.completed_at|timestamp_to_str("%d %b %Y, %H:%M:%S") }}</td>
+      <td>{{ f.duration_ms|duration_to_str }}</td>
+      <td><span class="badge status-{{ f.status }}">{{ f.status|capitalize }}</span></td>
+      <td>{{ f.finding_count }}</td>
+      <td>{{ f.high_count or 0 }}</td>
+      <td><a class="history-action" href="{{ url_for('view_analysis', analysis_id=f.id) }}"
+             target="_blank" rel="noopener" title="View this analysis"><i class="bi bi-box-arrow-up-right"></i> View</a></td>
+    </tr>
+    {% endfor %}
     {% else %}
     <tr>
       <td class="checkbox-cell"><label class="check"><input type="checkbox" name="analysis_id" value="{{ a.id }}" class="row-check" {{ 'checked' if a.id in selected }} /><span class="check-box"></span></label></td>
@@ -85,12 +99,13 @@
       <td><span class="badge status-{{ a.status }}">{{ a.status|capitalize }}</span></td>
       <td>{{ a.finding_count }}</td>
       <td>{{ a.high_count or 0 }}</td>
-      <td><a class="link-chip" href="{{ url_for('view_analysis', analysis_id=a.id) }}"
+      <td><a class="history-action" href="{{ url_for('view_analysis', analysis_id=a.id) }}"
              target="_blank" rel="noopener"><i class="bi bi-box-arrow-up-right"></i> View</a></td>
     </tr>
     {% endif %}
     {% endfor %}
   </table>
+  </div>
 </form>
 {% endif %}
 {% endblock %}
@@ -132,6 +147,17 @@ document.addEventListener("DOMContentLoaded", () => {
       document.querySelectorAll(`.batch-child-check[data-batch-of="${box.dataset.batchTarget}"]`)
         .forEach((k) => { k.checked = box.checked; });
       updateState();
+    });
+  });
+
+  // Toggles a batch's file rows: sibling <tr>s, so their columns share the
+  // table's layout with the batch row above.
+  document.querySelectorAll(".batch-toggle").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const expanded = btn.getAttribute("aria-expanded") === "true";
+      btn.setAttribute("aria-expanded", String(!expanded));
+      document.querySelectorAll(`tr.batch-child-row[data-batch-of="${btn.dataset.batchToggle}"]`)
+        .forEach((row) => { row.hidden = expanded; });
     });
   });
 

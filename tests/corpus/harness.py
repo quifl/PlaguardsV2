@@ -7,9 +7,8 @@ from __future__ import annotations
 
 from plaguardsv2.GuardModules import PlagDeobfus, PlagGrep, PlagTrace
 
-# A signature finding's `value` is a rule description ("Hidden/bypass execution
-# flags"), not an indicator lifted out of the sample. Counting it as one would
-# score correct behavioural detections as false positives.
+# A signature finding's value is a rule description, not an indicator from
+# the sample; counting it would score correct detections as false positives.
 NON_INDICATOR_TYPES = {"signature"}
 
 

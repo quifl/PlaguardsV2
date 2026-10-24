@@ -1,18 +1,12 @@
-/* Pocolo — a guided product tour.
- *
- * Spotlights one feature at a time: dims the page, cuts a hole around the
- * target element, and anchors a speech bubble next to it. Steps are declared
- * per page, and any step whose target isn't on the current page is skipped,
- * so the same script drives the tour everywhere. */
+/* Pocolo, a guided product tour: spotlights one feature at a time. Steps are
+ * declared per page, and a step whose target is absent is skipped. */
 (function () {
   "use strict";
 
   const SEEN_KEY = "plaguardsv2.tourSeen";
 
-  /* Steps are grouped per feature so the Tutorial page can launch a short
-     tour of just one area, while "everything" chains them all together.
-     `page` is where the step's target lives; a tour that needs a different
-     page navigates there and resumes automatically. */
+  /* Grouped per feature so the Tutorial can tour one area; "everything" chains
+     them, navigating to each step's `page` and resuming there. */
   const TOURS = {
     navigation: {
       label: "Getting around",
@@ -26,7 +20,7 @@
         {
           target: "#navmenu", page: "/",
           title: "The main areas",
-          body: "Analyze runs a script, History keeps your recent ones, Tutorial is where you are now, and Settings holds API keys and preferences.",
+          body: "Analyze runs a script, History keeps your recent ones, Tutorial explains every feature, and Settings holds API keys and preferences.",
           placement: "right",
         },
       ],
@@ -37,19 +31,19 @@
         {
           target: "textarea[name='script_text']", page: "/",
           title: "Paste a script",
-          body: "Drop an obfuscated PowerShell script in here — or VBS, JScript, batch, a raw log line. Nothing is ever executed; it is all static text analysis.",
+          body: "Drop an obfuscated PowerShell script in here, or VBS, JScript, batch, a raw log line. Nothing is ever executed; it is all static text analysis.",
           placement: "right",
         },
         {
           target: ".drop-zone", page: "/",
           title: "…or bring files in",
-          body: "Click Choose files, or drag them from Explorer — anywhere on the page works, not just this box. .ps1 .txt .vbs .js .bat .cmd .log, or a .zip, analyzed one by one.",
+          body: "Click Choose files, or drag them from Explorer. Anywhere on the page works, not just this box. .ps1 .txt .vbs .js .bat .cmd .log, or a .zip, analyzed one by one.",
           placement: "top",
         },
         {
           target: "input[name='skip_intel']", page: "/",
           title: "Working offline?",
-          body: "Tick this to skip threat-intel lookups. Deobfuscation and IOC extraction still run — they never leave this machine.",
+          body: "Tick this to skip threat-intel lookups. Deobfuscation and IOC extraction still run, and never leave this machine.",
           placement: "top",
         },
         {
@@ -72,13 +66,13 @@
         {
           target: ".lookup-form", page: "/",
           title: "Check a single indicator",
-          body: "Already have one IP, domain, URL or hash? Check it straight against your configured providers without running a full analysis. Nothing is stored.",
+          body: "Already have one IP, domain, URL, hash or malware family? Check it straight against your configured providers without running a full analysis. Nothing is stored in History.",
           placement: "left",
         },
         {
           target: ".lookup-type", page: "/",
           title: "Pick a type, or don't",
-          body: "Left on auto, the value's shape decides. Choose one to force it — and to reach Malware signature / family, which has no shape to detect: AgentTesla, Formbook, and so on.",
+          body: "Left on auto, the value's shape decides. Choose one to force it, and to reach Malware signature / family, which has no shape to detect: AgentTesla, Formbook, and so on.",
           placement: "left",
         },
       ],
@@ -95,7 +89,13 @@
         {
           target: ".resolved-table", page: "latest",
           title: "Resolved variables",
-          body: "Values rebuilt by folding literals through concatenation, Base64 and string operations — this is where the real C2 address usually surfaces.",
+          body: "Values rebuilt by folding literals through concatenation, Base64 and string operations. This is where the real C2 address usually surfaces.",
+          placement: "right",
+        },
+        {
+          target: "#encodedRuns", page: "latest",
+          title: "Encoded runs",
+          body: "Every encoded string left in the script, with the CyberChef recipe that opened it, such as From Hex > From Base64 > Gunzip. With the offline CyberChef installed, its button opens that recipe on the run.",
           placement: "right",
         },
         {
@@ -125,8 +125,42 @@
         {
           target: ".triage-buttons", page: "latest",
           title: "Record your verdict",
-          body: "Confirm Threat, False Positive or Unknown. Severity describes the technique observed — your call is what the report treats as authoritative.",
+          body: "Confirm Threat, False Positive or Unknown. Severity describes the technique observed. Your call is what the report treats as authoritative.",
           placement: "left",
+        },
+      ],
+    },
+    threatintel: {
+      label: "Threat intelligence",
+      steps: [
+        {
+          target: ".intel-summary", page: "latest",
+          title: "One headline, not five",
+          body: "Every provider that supports this indicator type is asked, and the worst verdict any of them returned becomes the headline. The count next to it says how many actually answered.",
+          placement: "left",
+        },
+        {
+          target: ".intel-block", page: "latest",
+          title: "Open the breakdown",
+          body: "Each provider's own answer, with the detail it gave: detections, open ports, pulse names. Click any row to open that provider's page for this indicator in a new tab.",
+          placement: "left",
+        },
+      ],
+    },
+    geolocation: {
+      label: "Where the addresses are",
+      steps: [
+        {
+          target: "#geoSection", page: "/settings",
+          title: "Point it at a database",
+          body: "Give it MaxMind's GeoLite2 City, Country or ASN: a .mmdb, a folder, or the .tar.gz exactly as downloaded. With a local database the address never leaves this machine.",
+          placement: "top",
+        },
+        {
+          target: ".result-actions", page: "latest",
+          title: "It travels with the findings",
+          body: "Country, region, coordinates, the radius those coordinates are good to, ASN and reverse DNS land in the report and in every Excel and CSV export.",
+          placement: "bottom",
         },
       ],
     },
@@ -136,13 +170,13 @@
         {
           target: "#reportIocs", page: "latest",
           title: "Redact before sharing",
-          body: "Tick this and indicator values print black-on-black in the PDF — present in the document, but not readable at a glance.",
+          body: "Tick this and indicator values print black-on-black in the PDF: present in the document, but not readable at a glance.",
           placement: "bottom",
         },
         {
           target: "#viewReportBtn", page: "latest",
           title: "View or download",
-          body: "Cover, a clickable contents with page numbers, and a formal disclaimer first — then page 1: the summary, findings table, per-finding detail, transforms, and both scripts.",
+          body: "Cover, a clickable contents with page numbers, and a formal disclaimer first, then page 1: the summary, findings table, per-finding detail, transforms, and both scripts.",
           placement: "bottom",
         },
       ],
@@ -170,7 +204,7 @@
         {
           target: ".sidebar-links", page: "/",
           title: "Where this came from",
-          body: "The author's GitHub, plus Plaguards v1 — the project PlaguardsV2 is built on. All open in a new tab.",
+          body: "The authors' GitHub profiles, plus Plaguards v1, the project PlaguardsV2 is built on. Each opens in a new tab.",
           placement: "right",
         },
       ],
@@ -181,13 +215,19 @@
         {
           target: ".settings-form", page: "/settings",
           title: "Threat-intel API keys",
-          body: "Add keys for any of the providers listed. Green means configured, red means that provider is skipped. Leaving a field blank keeps the stored key.",
+          body: "Add keys for any of the providers listed. Green means configured, red means that provider is skipped. Leaving a field blank keeps the stored key; Remove forgets one.",
           placement: "right",
         },
         {
           target: "#geoSection", page: "/settings",
           title: "Geolocation databases",
-          body: "Point these at MaxMind's GeoLite2 City, Country and ASN files — a .mmdb, a folder, or the .tar.gz as downloaded. Whichever you fill in are merged into one record per address, and nothing leaves this machine.",
+          body: "Point these at MaxMind's GeoLite2 City, Country and ASN files: a .mmdb, a folder, or the .tar.gz as downloaded. Whichever you fill in are merged into one record per address, and nothing leaves this machine.",
+          placement: "top",
+        },
+        {
+          target: "#cyberchefSection", page: "/settings",
+          title: "CyberChef, offline",
+          body: "Whether the local copy of CyberChef is installed. It runs from this server and cannot send data anywhere else; if it's missing, this section shows the one command that installs it.",
           placement: "top",
         },
         {
@@ -206,11 +246,13 @@
     },
   };
 
-  const ORDER = ["navigation", "analysis", "lookup", "findings", "reports", "history", "settings", "credits"];
+  const ORDER = ["navigation", "analysis", "lookup", "findings", "threatintel",
+                 "geolocation", "reports", "history", "settings", "credits"];
 
   let steps = [];
   let index = 0;
   let chapterKey = null;
+  let currentLabel = null;
   let nodes = null;
 
   function visible(el) {
@@ -232,6 +274,7 @@
           <div>
             <div class="tour-title"></div>
             <div class="tour-count"></div>
+            <div class="tour-progress"><span class="tour-progress-fill"></span></div>
           </div>
         </div>
         <p class="tour-body"></p>
@@ -250,6 +293,7 @@
       pop: overlay.querySelector(".tour-pop"),
       title: overlay.querySelector(".tour-title"),
       count: overlay.querySelector(".tour-count"),
+      progress: overlay.querySelector(".tour-progress-fill"),
       body: overlay.querySelector(".tour-body"),
       prev: overlay.querySelector(".tour-prev"),
       next: overlay.querySelector(".tour-next"),
@@ -336,17 +380,28 @@
     const el = document.querySelector(step.target);
     if (!el) return go(next > index ? next + 1 : next - 1);
 
-    // A step may point inside a collapsed <details>; open it so the
-    // spotlight has something to sit on.
-    const holder = el.closest("details");
-    if (holder && !holder.open) {
-      holder.open = true;
-      setTimeout(reposition, 60);
+    // Ancestors and descendants, not just the nearest: a finding card is a
+    // <details> whose intel panel is another. Left open after the tour.
+    let opened = false;
+    for (let node = el.closest("details"); node;
+         node = node.parentElement && node.parentElement.closest("details")) {
+      if (!node.open) {
+        node.open = true;
+        opened = true;
+      }
     }
+    el.querySelectorAll("details:not([open])").forEach((inner) => {
+      inner.open = true;
+      opened = true;
+    });
+    if (opened) setTimeout(reposition, 60);
 
     nodes.title.textContent = step.title;
     nodes.body.textContent = step.body;
-    nodes.count.textContent = `Step ${index + 1} of ${steps.length}`;
+    nodes.count.textContent = currentLabel
+      ? `${currentLabel} · step ${index + 1} of ${steps.length}`
+      : `Step ${index + 1} of ${steps.length}`;
+    nodes.progress.style.width = `${((index + 1) / steps.length) * 100}%`;
     nodes.prev.disabled = index === 0;
     nodes.next.textContent = index === steps.length - 1 ? "Finish" : "Next";
 
@@ -367,7 +422,7 @@
     let href = wanted;
     if (wanted === "latest") {
       if (!window.LATEST_ANALYSIS_ID) {
-        if (!quiet) alert("Run an analysis first - this part of the tour needs some results to point at.");
+        if (!quiet) alert("Run an analysis first. This part of the tour needs some results to point at.");
         return false;
       }
       href = `/analysis/${window.LATEST_ANALYSIS_ID}`;
@@ -379,9 +434,8 @@
     return true;
   }
 
-  /* "Tour everything" spans several pages. Rather than silently dropping the
-     steps that aren't here, remember which chapters are still outstanding and
-     navigate to the next one when this page's steps run out. */
+  /* "Tour everything" spans pages: outstanding chapters are remembered, and
+     the tour moves on when this page's steps run out. */
   function remaining(name) {
     if (name !== "everything") return [];
     const done = sessionStorage.getItem("plaguardsv2.tourDone");
@@ -406,6 +460,7 @@
         const here = chapter.filter((s) => visible(document.querySelector(s.target)));
         if (here.length) {
           chapterKey = key;
+          currentLabel = TOURS[key].label;
           steps = here;
           if (!nodes) build();
           nodes.overlay.classList.add("open");
@@ -418,11 +473,12 @@
         markChapterDone(key);
       }
       sessionStorage.removeItem("plaguardsv2.tourDone");
-      alert("That's the whole tour - you're all caught up.");
+      alert("That's the whole tour. You're all caught up.");
       return;
     }
 
     chapterKey = null;
+    currentLabel = (TOURS[wanted] || {}).label || null;
     const all = collect(wanted);
     steps = all.filter((s) => visible(document.querySelector(s.target)));
 

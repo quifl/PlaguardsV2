@@ -11,7 +11,13 @@ from __future__ import annotations
 
 import ipaddress
 
+from .PlagRules import SIGNATURES
+
 RESERVED_TLDS = {"invalid", "example", "test", "localhost", "local", "internal", "home", "lan"}
+
+# Local rule names share the "signature" type with malware families, but name
+# a technique, so MalwareBazaar rejects them every time.
+_LOCAL_RULE_NAMES = {sig["name"] for sig in SIGNATURES}
 
 
 def _host_of(value: str) -> str:
@@ -37,15 +43,15 @@ def _ip_reason(host: str) -> str | None:
     # blocks as `is_private`, which would otherwise mislabel them.
     for net in ("192.0.2.0/24", "198.51.100.0/24", "203.0.113.0/24", "2001:db8::/32"):
         if addr.version == ipaddress.ip_network(net).version and addr in ipaddress.ip_network(net):
-            return "RFC 5737 documentation address - reserved for examples, never routed"
+            return "RFC 5737 documentation address: reserved for examples, never routed"
     if addr.is_loopback:
-        return "loopback address - not present in public reputation data"
+        return "loopback address: not present in public reputation data"
     if addr.is_link_local:
-        return "link-local address - not present in public reputation data"
+        return "link-local address: not present in public reputation data"
     if addr.is_private:
-        return "private/internal address - not present in public reputation data"
+        return "private/internal address: not present in public reputation data"
     if addr.is_multicast or addr.is_reserved or addr.is_unspecified:
-        return "reserved address range - not present in public reputation data"
+        return "reserved address range: not present in public reputation data"
     return None
 
 
@@ -58,14 +64,17 @@ def skip_reason(finding_type: str, value: str) -> str | None:
     away real results. Those get an advisory note instead.
     """
     if finding_type == "hash_partial":
-        return "truncated hash - providers need the full digest to match"
+        return "truncated hash: providers need the full digest to match"
+
+    if finding_type == "signature" and value in _LOCAL_RULE_NAMES:
+        return "local detection-rule name, not a malware family, so not queryable against MalwareBazaar"
 
     if finding_type in ("domain", "url", "email"):
         host = _host_of(value)
         if host and "." in host and host.rsplit(".", 1)[-1] in RESERVED_TLDS:
-            return "reserved/non-routable domain suffix - providers reject this as unqueryable"
+            return "reserved/non-routable domain suffix: providers reject it as unqueryable"
         if host and "." not in host:
-            return "not a fully-qualified host - nothing to look up"
+            return "not a fully-qualified host: nothing to look up"
     return None
 
 

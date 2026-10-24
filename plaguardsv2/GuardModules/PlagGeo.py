@@ -11,7 +11,7 @@ Two sources, in order of preference:
   1. A local MaxMind GeoLite2 database, if one is configured. Fully offline -
      the address never leaves the machine. City and Country give place and
      network; ASN gives the operator. All three can be pointed at together -
-     see `_resolve_databases` - and are merged into one record.
+     see `_resolve_one` - and are merged into one record.
   2. ipinfo.io, if a token is configured. One request per address, cached.
 
 Reverse DNS is done with the standard library and is independent of both.
@@ -23,17 +23,30 @@ from __future__ import annotations
 import ipaddress
 import socket
 import tarfile
+import threading
+from concurrent.futures import Future, ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeout
 from pathlib import Path
 
 from . import PlagConfig, PlagGrep
 from .PlagProviders.base import explain_http, safe_json_request
 
-# What the tabular export and the report show per address.
+# What the export and the report show per address. Close to everything
+# GeoLite2 carries; none of it costs an extra lookup.
 FIELDS = [
-    "ip", "category", "city", "latitude", "longitude", "country",
-    "country_code", "continent", "asn", "organization", "network",
-    "reverse_dns",
+    "ip", "category", "city", "region", "region_code", "postal_code",
+    "latitude", "longitude", "accuracy_radius", "time_zone",
+    "country", "country_code", "registered_country", "continent",
+    "asn", "organization", "network", "network_flags", "reverse_dns",
 ]
+
+# Anycast changes how a coordinate reads: the address answers from many
+# sites, so there is no single location.
+_TRAIT_FLAGS = (
+    ("is_anycast", "anycast"),
+    ("is_satellite_provider", "satellite provider"),
+    ("is_anonymous_proxy", "anonymous proxy"),
+)
 
 _IPINFO_URL = "https://ipinfo.io"
 REVERSE_DNS_TIMEOUT = 3.0
@@ -69,16 +82,45 @@ def category(value: str) -> str:
     return "public"
 
 
-def reverse_dns(value: str) -> str:
-    """The PTR record for an address, or "" if it has none."""
-    previous = socket.getdefaulttimeout()
+_RDNS_POOL = ThreadPoolExecutor(max_workers=8, thread_name_prefix="plaguards-rdns")
+_RDNS_MAX_REMEMBERED = 4096
+_rdns_done: dict[str, str] = {}
+_rdns_pending: dict[str, Future] = {}
+_rdns_lock = threading.Lock()
+
+
+def _resolve_ptr(value: str) -> str:
     try:
-        socket.setdefaulttimeout(REVERSE_DNS_TIMEOUT)
-        return socket.gethostbyaddr(value)[0]
-    except Exception:
+        name = socket.gethostbyaddr(value)[0]
+    except (OSError, UnicodeError, ValueError):
+        name = ""
+    with _rdns_lock:
+        if len(_rdns_done) >= _RDNS_MAX_REMEMBERED:
+            _rdns_done.clear()
+        _rdns_done[value] = name
+        _rdns_pending.pop(value, None)
+    return name
+
+
+def reverse_dns(value: str, timeout: float = REVERSE_DNS_TIMEOUT) -> str:
+    """The PTR record for an address, or "" if it has none or none came in time.
+
+    gethostbyaddr ignores socket timeouts and a first lookup can take several
+    seconds, so it runs on a worker and the caller waits at most `timeout`. A
+    late answer is still kept: the report and result page, which ask again,
+    get it for free. An address with no PTR is remembered too.
+    """
+    with _rdns_lock:
+        if value in _rdns_done:
+            return _rdns_done[value]
+        future = _rdns_pending.get(value)
+        if future is None:
+            future = _RDNS_POOL.submit(_resolve_ptr, value)
+            _rdns_pending[value] = future
+    try:
+        return future.result(timeout=timeout)
+    except FutureTimeout:
         return ""
-    finally:
-        socket.setdefaulttimeout(previous)
 
 
 _ARCHIVE_SUFFIXES = (".tar.gz", ".tgz")
@@ -127,6 +169,42 @@ def _pick(mmdbs: list[Path], kind: str) -> str | None:
     return str(mmdbs[0]) if mmdbs else None
 
 
+# Both a path resolve (a directory glob, sometimes unpacking an archive) and
+# a database open used to run once per address. Neither changes between.
+_resolve_cache: dict[tuple[str, str], str | None] = {}
+_reader_cache: dict[tuple[str, int, int], object] = {}
+_cache_lock = threading.Lock()
+_resolve_lock = threading.Lock()
+
+
+def _resolve_cached(path: str, kind: str) -> str | None:
+    """`_resolve_one` memoised on the configured path.
+
+    Keyed by the path as configured rather than by what it resolved to, so
+    editing the setting in Settings is picked up on the next lookup instead
+    of being served from a stale entry.
+    """
+    key = (path, kind)
+    # Locked because addresses are located in parallel, and two threads must not
+    # unpack the same .tar.gz into the same folder at once.
+    with _resolve_lock:
+        if key not in _resolve_cache:
+            found = _resolve_one(path, kind)
+            # A miss is not remembered: the file may be downloaded after the path is saved.
+            if found is None:
+                return None
+            _resolve_cache[key] = found
+        return _resolve_cache[key]
+
+
+DATABASE_LABELS = {"city": "City", "country": "Country", "asn": "ASN"}
+
+
+def resolve_database(path: str, kind: str) -> str | None:
+    """The `.mmdb` a Settings path leads to, or None when there is none there."""
+    return _resolve_cached((path or "").strip(), kind) if path else None
+
+
 def _resolve_one(path: str, kind: str, cache_dir: Path | None = None) -> str | None:
     """The `.mmdb` file for one GeoLite2 database - `kind` is 'city',
     'country' or 'asn', matching the Settings field `path` came from.
@@ -156,31 +234,85 @@ def _resolve_one(path: str, kind: str, cache_dir: Path | None = None) -> str | N
     return _pick(mmdbs, kind)
 
 
-def _maxmind_reader(db_path: str, method: str, value: str):
-    """Open one database, run one lookup, and always close it again."""
+def _get_reader(db_path: str):
+    """A cached reader for one database file.
+
+    maxminddb readers are memory-mapped and safe to share across threads for
+    reads, so one per file is kept for the life of the process instead of
+    being reopened per address. The file's size and mtime are part of the key:
+    MaxMind ships a fresh database every month, and a replaced file has to
+    produce a new reader rather than keep answering from the old mapping.
+    """
     try:
         import geoip2.database
     except ImportError:
         return None
     try:
-        with geoip2.database.Reader(db_path) as reader:
-            return getattr(reader, method)(value)
+        stat = Path(db_path).stat()
+    except OSError:
+        return None
+    key = (db_path, stat.st_mtime_ns, stat.st_size)
+
+    reader = _reader_cache.get(key)
+    if reader is not None:
+        return reader
+    with _cache_lock:
+        reader = _reader_cache.get(key)
+        if reader is None:
+            try:
+                reader = geoip2.database.Reader(db_path)
+            except Exception:
+                return None
+            # Drop, don't close: another thread may still be reading the
+            # superseded mapping. The last reference closes it.
+            for stale in [k for k in _reader_cache if k[0] == db_path]:
+                _reader_cache.pop(stale)
+            _reader_cache[key] = reader
+    return reader
+
+
+def _maxmind_reader(db_path: str, method: str, value: str):
+    """Run one lookup against a cached reader."""
+    reader = _get_reader(db_path)
+    if reader is None:
+        return None
+    try:
+        return getattr(reader, method)(value)
     except Exception:
         return None
+
+
+def _traits_flags(traits) -> str:
+    """The traits that are set, as readable text. getattr guards each one:
+    the attribute set grows between geoip2 releases and a missing flag is
+    not an error."""
+    return ", ".join(
+        label for attr, label in _TRAIT_FLAGS if getattr(traits, attr, False)
+    )
 
 
 def _from_maxmind_city(value: str, db_path: str) -> dict | None:
     record = _maxmind_reader(db_path, "city", value)
     if record is None:
         return None
+    # most_specific takes the narrowest subdivision rather than assuming
+    # the list holds exactly one.
+    subdivision = record.subdivisions.most_specific
     return {
         "city": record.city.name or "",
+        "region": subdivision.name or "",
+        "region_code": subdivision.iso_code or "",
+        "postal_code": record.postal.code or "",
         "latitude": record.location.latitude,
         "longitude": record.location.longitude,
+        "accuracy_radius": record.location.accuracy_radius,
+        "time_zone": record.location.time_zone or "",
         "country": record.country.name or "",
         "country_code": record.country.iso_code or "",
+        "registered_country": record.registered_country.name or "",
         "continent": record.continent.name or "",
         "network": str(record.traits.network or ""),
+        "network_flags": _traits_flags(record.traits),
     }
 
 
@@ -191,8 +323,10 @@ def _from_maxmind_country(value: str, db_path: str) -> dict | None:
     return {
         "country": record.country.name or "",
         "country_code": record.country.iso_code or "",
+        "registered_country": record.registered_country.name or "",
         "continent": record.continent.name or "",
         "network": str(record.traits.network or ""),
+        "network_flags": _traits_flags(record.traits),
     }
 
 
@@ -270,6 +404,11 @@ def _from_ipinfo(value: str, token: str) -> dict | None:
 
     return {
         "city": body.get("city") or "",
+        # ipinfo returns these in the same free response as the city, so not
+        # reading them was leaving paid-for detail on the floor.
+        "region": body.get("region") or "",
+        "postal_code": body.get("postal") or "",
+        "time_zone": body.get("timezone") or "",
         "latitude": latitude,
         "longitude": longitude,
         "country": body.get("country") or "",
@@ -282,12 +421,38 @@ def _from_ipinfo(value: str, token: str) -> dict | None:
     }
 
 
+def _sources(conn) -> tuple[dict, str]:
+    """The configured GeoLite2 paths and ipinfo token, read on the caller's thread."""
+    configured = PlagConfig.get_geoip_db_paths(conn)
+    token = PlagConfig.get_api_key(conn, "ipinfo") if conn is not None else ""
+    return configured, token or ""
+
+
 def locate(value: str, conn=None) -> dict:
     """Everything we can say about one address.
 
     Always returns the full field set so callers - the report, the CSV
     export - never have to special-case a missing key.
     """
+    return _locate(value, *_sources(conn))
+
+
+def locate_many(values, conn=None) -> dict:
+    """`{address: locate() record}` for every distinct address, located in parallel.
+
+    Reverse DNS and ipinfo both wait on the network, so a report with a dozen
+    addresses waited a dozen times in a row. Settings are read here, on the
+    calling thread, because the database connection belongs to it.
+    """
+    unique = list(dict.fromkeys(v for v in values if v))
+    configured, token = _sources(conn)
+    if len(unique) < 2:
+        return {v: _locate(v, configured, token) for v in unique}
+    with ThreadPoolExecutor(max_workers=min(8, len(unique)), thread_name_prefix="plaguards-geo") as pool:
+        return dict(zip(unique, pool.map(lambda v: _locate(v, configured, token), unique), strict=True))
+
+
+def _locate(value: str, configured: dict, token: str) -> dict:
     result = {name: "" for name in FIELDS}
     result["ip"] = value
     result["category"] = category(value)
@@ -299,15 +464,14 @@ def locate(value: str, conn=None) -> dict:
         return result
     if result["category"] != "public":
         # A private or reserved address has no public location to find.
-        result["note"] = f"{result['category']} address - no public geolocation"
+        result["note"] = f"{result['category']} address: no public geolocation"
         return result
 
     result["reverse_dns"] = reverse_dns(value)
 
-    configured = PlagConfig.get_geoip_db_paths(conn)
     if any(configured.values()):
         dbs = {
-            kind: _resolve_one(path, kind)
+            kind: _resolve_cached(path, kind)
             for kind, path in configured.items() if path
         }
         dbs = {kind: db for kind, db in dbs.items() if db}
@@ -317,7 +481,6 @@ def locate(value: str, conn=None) -> dict:
             return result
         result["note"] = "GeoLite2 database configured but unreadable"
 
-    token = PlagConfig.get_api_key(conn, "ipinfo") if conn is not None else ""
     if token:
         found = _from_ipinfo(value, token)
         if found and "error" in found:
@@ -337,15 +500,14 @@ def enrich(findings: list, conn=None) -> dict:
     Returns `{ip: record}`. Addresses that cannot be located still get a
     record, so the export shows the reason rather than an empty row.
     """
-    seen: dict[str, dict] = {}
+    hosts = []
     for finding in findings:
         if getattr(finding, "type", None) not in ("ip", "ip_port"):
             continue
         value = str(getattr(finding, "value", "")).rsplit(":", 1)[0] \
             if getattr(finding, "type", "") == "ip_port" else str(getattr(finding, "value", ""))
-        if value and value not in seen:
-            seen[value] = locate(value, conn)
-    return seen
+        hosts.append(value)
+    return locate_many(hosts, conn)
 
 
 def describe(record: dict | None) -> list[dict]:
@@ -365,14 +527,32 @@ def describe(record: dict | None) -> list[dict]:
     rows = []
     if record.get("city"):
         rows.append({"label": "City", "value": record["city"]})
+    if record.get("region"):
+        code = f" ({record['region_code']})" if record.get("region_code") else ""
+        rows.append({"label": "Region", "value": record["region"] + code})
+    if record.get("postal_code"):
+        rows.append({"label": "Postal code", "value": record["postal_code"]})
     if record.get("country"):
         code = f" ({record['country_code']})" if record.get("country_code") else ""
         rows.append({"label": "Country", "value": record["country"] + code})
+    # Shown only when it disagrees with the geographic country: the block is
+    # administered elsewhere, routine for hosting and VPN ranges.
+    registered = record.get("registered_country")
+    if registered and registered != record.get("country"):
+        rows.append({"label": "Registered country", "value": registered})
     if record.get("continent"):
         rows.append({"label": "Continent", "value": record["continent"]})
     if record.get("latitude") is not None and record.get("longitude") is not None:
         rows.append({"label": "Coordinates",
                      "value": f"{record['latitude']}, {record['longitude']}"})
+    # Without the radius a 1000 km country guess reads like a 20 km city fix.
+    if record.get("accuracy_radius") not in (None, ""):
+        rows.append({"label": "Accuracy radius",
+                     "value": f"{record['accuracy_radius']} km"})
+    if record.get("time_zone"):
+        rows.append({"label": "Time zone", "value": record["time_zone"]})
+    if record.get("network_flags"):
+        rows.append({"label": "Network type", "value": record["network_flags"]})
     if record.get("organization"):
         asn = f" ({record['asn']})" if record.get("asn") else ""
         rows.append({"label": "Operator", "value": record["organization"] + asn})

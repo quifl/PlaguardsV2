@@ -21,13 +21,8 @@ def run_analysis(
     batch_id: int | None = None,
     prune: bool = True,
 ) -> dict:
-    # perf_counter is monotonic and high-resolution - immune to wall-clock
-    # adjustments - so it is what measures the duration. time.time() is
-    # wall-clock and unrelated to it; it only stamps when things happened,
-    # matching the created_at convention already used everywhere else in
-    # PlagStore. Both are local to this call, so nothing here is shared
-    # mutable state - independently correct even if a future caller runs
-    # several of these concurrently (see PlagEngine.run_batch_analysis).
+    # perf_counter times the run (monotonic, immune to clock changes); time.time()
+    # stamps when, as PlagStore does. Both are call-local, so safe under concurrency.
     perf_start = time.perf_counter()
     started_at = time.time()
 
@@ -52,15 +47,19 @@ def run_analysis(
             f"string(s) once their variables were known"
         )
 
-    # The IOC check is part of analysis, not a separate errand: every
-    # extracted indicator is looked up unless the analyst explicitly opted
-    # out for an offline run.
+    # The IOC check is part of the analysis: every indicator is looked up unless
+    # the analyst opted out for an offline run.
     geo: dict = {}
     if skip_intel:
         pass_log.append("Threat-intel and geolocation lookups skipped at your request")
     else:
         PlagIntel.enrich(findings, conn=conn, use_cache=use_cache)
-        checked = sum(1 for f in findings if getattr(f, "intel", None))
+        # "scope" is written when an indicator is ruled out before any
+        # provider is called, so it must not count as queried.
+        checked = sum(
+            1 for f in findings
+            if any(k != "scope" for k in (getattr(f, "intel", None) or {}))
+        )
         pass_log.append(
             f"IOC check: {checked} of {len(findings)} indicator(s) queried against "
             f"the configured threat-intel providers"
@@ -72,10 +71,8 @@ def run_analysis(
                 f"Geolocation: {located} of {len(geo)} address(es) located"
             )
 
-    # Stops here, not after the database write below: persistence is
-    # bookkeeping, not analysis, and its time depends on unrelated things
-    # (disk I/O, WAL checkpoints) that would make the measurement noisy and
-    # dishonest about what the engine itself actually cost.
+    # Stops before the database write: persistence time (disk I/O, WAL
+    # checkpoints) would make the engine's own cost noisy.
     duration_ms = (time.perf_counter() - perf_start) * 1000
     completed_at = time.time()
 

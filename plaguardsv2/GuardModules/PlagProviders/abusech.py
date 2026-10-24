@@ -3,7 +3,7 @@ URLhaus for URLs, ThreatFox for IP/domain IOC search. All use the same
 unified Auth-Key from auth.abuse.ch."""
 from __future__ import annotations
 
-from .base import explain_http, safe_json_request
+from .base import brief, compose, http_verdict, safe_json_request
 
 SUPPORTS = {"hash_md5", "hash_sha1", "hash_sha256", "ip", "domain", "url", "signature"}
 
@@ -41,7 +41,7 @@ def _malwarebazaar_signature(value: str, api_key: str) -> dict:
     if err:
         return {"verdict": "error", "detail": f"MalwareBazaar request failed: {err}"}
     if status != 200 or body is None:
-        return {"verdict": "error", "detail": explain_http("MalwareBazaar", status)}
+        return http_verdict("MalwareBazaar", status)
 
     qstatus = body.get("query_status")
     if qstatus in ("signature_not_found", "no_results"):
@@ -53,7 +53,7 @@ def _malwarebazaar_signature(value: str, api_key: str) -> dict:
     if not entries:
         return {"verdict": "unknown", "detail": f"No samples tagged '{value}'"}
     types = sorted({e.get("file_type") for e in entries if e.get("file_type")})
-    detail = f"Known malware family - {len(entries)} recent sample(s)"
+    detail = f"Known malware family: {len(entries)} recent sample(s)"
     if types:
         detail += f" ({', '.join(types[:4])})"
     return {"verdict": "malicious", "detail": detail}
@@ -68,7 +68,7 @@ def _urlhaus_url(value: str, api_key: str) -> dict:
     if err:
         return {"verdict": "error", "detail": f"URLhaus request failed: {err}"}
     if status != 200 or body is None:
-        return {"verdict": "error", "detail": explain_http("URLhaus", status)}
+        return http_verdict("URLhaus", status)
 
     if body.get("query_status") != "ok":
         return {"verdict": "unknown", "detail": "Not found in URLhaus"}
@@ -90,7 +90,7 @@ def _malwarebazaar_hash(value: str, api_key: str) -> dict:
     if err:
         return {"verdict": "error", "detail": f"MalwareBazaar request failed: {err}"}
     if status != 200 or body is None:
-        return {"verdict": "error", "detail": explain_http("MalwareBazaar", status)}
+        return http_verdict("MalwareBazaar", status)
 
     qstatus = body.get("query_status")
     if qstatus == "hash_not_found":
@@ -103,12 +103,14 @@ def _malwarebazaar_hash(value: str, api_key: str) -> dict:
         return {"verdict": "unknown", "detail": "Not found in MalwareBazaar"}
     entry = entries[0]
     sig = entry.get("signature") or "unspecified malware family"
-    tags = ", ".join(entry.get("tags") or [])
     file_type = entry.get("file_type") or "unknown type"
-    detail = f"Known malware sample ({file_type}): {sig}"
-    if tags:
-        detail += f" (tags: {tags})"
-    return {"verdict": "malicious", "detail": detail}
+    return {"verdict": "malicious", "detail": compose(
+        f"Known malware sample ({file_type}): {sig}",
+        f"tags: {brief(entry.get('tags') or [], limit=4)}" if entry.get("tags") else "",
+        f"as {entry['file_name']}" if entry.get("file_name") else "",
+        f"first seen {str(entry['first_seen'])[:10]}" if entry.get("first_seen") else "",
+        f"delivery: {entry['delivery_method']}" if entry.get("delivery_method") else "",
+    )}
 
 
 def _threatfox_ioc(value: str, api_key: str) -> dict:
@@ -120,7 +122,7 @@ def _threatfox_ioc(value: str, api_key: str) -> dict:
     if err:
         return {"verdict": "error", "detail": f"ThreatFox request failed: {err}"}
     if status != 200 or body is None:
-        return {"verdict": "error", "detail": explain_http("ThreatFox", status)}
+        return http_verdict("ThreatFox", status)
 
     qstatus = body.get("query_status")
     if qstatus in ("no_result", "illegal_search_term"):
@@ -132,10 +134,21 @@ def _threatfox_ioc(value: str, api_key: str) -> dict:
     if not entries:
         return {"verdict": "unknown", "detail": "Not found in ThreatFox"}
     entry = entries[0]
-    malware = entry.get("malware_printable") or entry.get("malware") or "unspecified"
     threat_type = entry.get("threat_type_desc") or entry.get("threat_type") or "IOC"
     confidence = entry.get("confidence_level")
-    detail = f"{threat_type} associated with {malware}"
-    if confidence is not None:
-        detail += f" (confidence {confidence}%)"
-    return {"verdict": "malicious", "detail": detail}
+
+    # ThreatFox returns one entry per sighting; reading only the first reported
+    # one family for an address on record as serving several.
+    families: list[str] = []
+    for item in entries:
+        name = item.get("malware_printable") or item.get("malware")
+        if name and name not in families:
+            families.append(str(name))
+    seen = sorted(str(i.get("first_seen") or "")[:10] for i in entries if i.get("first_seen"))
+
+    return {"verdict": "malicious", "detail": compose(
+        f"{threat_type} associated with {brief(families or ['unspecified'], limit=3)}",
+        f"confidence {confidence}%" if confidence is not None else "",
+        f"{len(entries)} sighting(s)" if len(entries) > 1 else "",
+        f"first seen {seen[0]}" if seen else "",
+    )}

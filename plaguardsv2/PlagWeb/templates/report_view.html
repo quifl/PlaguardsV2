@@ -3,14 +3,13 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  {# A raw PDF response gets the browser's generic name and icon. Wrapping it
-     in a page of our own is what lets the tab say "Plaguards Report 42" and
-     carry the Plaguards mark. #}
+  {# A raw PDF gets the browser's generic tab name and icon; this wrapper gives
+     it "Plaguards Report 42" and the Plaguards mark. #}
   <title>{{ report_title }}</title>
   <link rel="icon" href="{{ url_for('static', filename='assets/plaguard-logo.png') }}" />
   <style>
     html, body { margin: 0; height: 100%; background: #040b14; }
-    embed, iframe { display: block; width: 100%; height: 100%; border: 0; }
+    object { display: block; width: 100%; height: 100%; border: 0; }
     .fallback {
       color: #eef1f6; font-family: system-ui, Segoe UI, Arial, sans-serif;
       padding: 28px; font-size: 14px;
@@ -19,10 +18,12 @@
   </style>
 </head>
 <body>
-  <embed src="{{ pdf_url }}" type="application/pdf" />
-  <noscript class="fallback">
-    <p>Your browser cannot display the PDF inline.
-      <a href="{{ pdf_url }}">Open it directly</a>.</p>
-  </noscript>
+  {# <object> shows its content when the browser has no PDF viewer; <embed> shows nothing. #}
+  <object data="{{ pdf_url }}" type="application/pdf">
+    <div class="fallback">
+      <p>This browser can't show the PDF here.
+        <a href="{{ pdf_url }}">Open the report directly</a>.</p>
+    </div>
+  </object>
 </body>
 </html>

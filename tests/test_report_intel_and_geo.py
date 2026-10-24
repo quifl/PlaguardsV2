@@ -64,10 +64,49 @@ def test_summary_headline_ignores_unchecked_providers():
     assert d2["intel_summary"]["verdict"] == "not_checked"
 
 
+def test_a_ruled_out_indicator_states_its_reason_once():
+    """A finding no provider was called for has its reason printed by the
+    intel summary already. The separate Note row repeated the identical
+    sentence directly underneath it, on every skipped finding in the report.
+    """
+    stored = {
+        "original": "x", "deobfuscated": "x", "source_kind": "pasted",
+        "pass_log": [],
+        "findings": [{
+            "type": "domain", "value": "host.invalid", "severity": "info",
+            "intel": {"scope": {
+                "verdict": "not_applicable",
+                "detail": "reserved/non-routable domain suffix",
+            }},
+        }],
+    }
+    html = PlagReport.render_html(stored)
+    assert html.count("reserved/non-routable domain suffix") == 1
+
+
+def test_a_ruled_out_indicator_keeps_its_note_when_a_provider_did_answer():
+    """The Note row is still the only place the caveat appears when provider
+    rows are present, so suppressing it there would lose it."""
+    stored = {
+        "original": "x", "deobfuscated": "x", "source_kind": "pasted",
+        "pass_log": [],
+        "findings": [{
+            "type": "ip", "value": "198.51.100.42", "severity": "info",
+            "intel": {
+                "virustotal": {"verdict": "clean", "detail": "0 malicious"},
+                "scope": {"verdict": "info", "detail": "documentation range"},
+            },
+        }],
+    }
+    assert "documentation range" in PlagReport.render_html(stored)
+
+
+def _jakarta(values, conn=None):
+    return {v: {"city": "Jakarta", "country": "Indonesia", "note": ""} for v in values}
+
+
 def test_build_report_context_attaches_geo_rows_to_ip_findings(monkeypatch):
-    monkeypatch.setattr(PlagGeo, "locate", lambda value, conn: {
-        "city": "Jakarta", "country": "Indonesia", "note": "",
-    })
+    monkeypatch.setattr(PlagGeo, "locate_many", _jakarta)
     stored = {
         "original": "", "deobfuscated": "", "source_kind": "pasted", "pass_log": [],
         "findings": [
@@ -84,9 +123,7 @@ def test_build_report_context_attaches_geo_rows_to_ip_findings(monkeypatch):
 
 
 def test_report_html_includes_the_geolocation_section(monkeypatch):
-    monkeypatch.setattr(PlagGeo, "locate", lambda value, conn: {
-        "city": "Jakarta", "country": "Indonesia", "note": "",
-    })
+    monkeypatch.setattr(PlagGeo, "locate_many", _jakarta)
     stored = {
         "original": "", "deobfuscated": "", "source_kind": "pasted", "pass_log": [],
         "findings": [
@@ -99,11 +136,8 @@ def test_report_html_includes_the_geolocation_section(monkeypatch):
     assert "Jakarta" in html
 
 
-# The extractor and the report are owned by different modules, so a new
-# indicator type can be added in PlagGrep and reach an analyst-facing report
-# with no label at all. It does not crash - _as_dict falls back to
-# type.replace("_", " ").title() - which is exactly why it goes unnoticed:
-# the report just prints "Ipv6 Port" and "Unc Path" at the reader.
+# A new PlagGrep type can reach the report unlabelled without crashing:
+# _as_dict title-cases the type name, so "Ipv6 Port" goes unnoticed.
 _MIXED_SAMPLE = "\n".join([
     'Write-Host "2001:db8::1 and [2001:db8::2]:443"',
     'Write-Host "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4"',

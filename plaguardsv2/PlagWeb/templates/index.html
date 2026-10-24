@@ -1,13 +1,13 @@
 {% extends "base.html" %}
-{% block title %}PlaguardsV2 - Analyze{% endblock %}
+{% block title %}Analyze - PlaguardsV2{% endblock %}
 {% block content %}
 <div class="section-title"><h2>Analyze</h2></div>
 
 <div class="pocolo-tip">
   <img src="{{ url_for('static', filename='assets/pocolo.png') }}" alt="Pocolo" />
   <div class="bubble">
-    Hi, I'm <strong>Pocolo</strong>! Paste a script or drop a single IOC below &mdash; I'll only
-    <em>read</em> it, never run it.
+    Hi, I'm <strong>Pocolo</strong>! Paste a script, drop in files, or check a single
+    indicator below. I only <em>read</em> what you give me; nothing is ever run.
     <div class="pocolo-actions">
       <a class="link-chip" href="#" data-start-tour><i class="bi bi-play-circle"></i> Take the guided tour</a>
       <a class="link-chip" href="{{ url_for('run_example') }}" data-busy-link="Running the example…"><i class="bi bi-lightning-charge"></i> Run the example script</a>
@@ -19,7 +19,7 @@
 <div class="tool-grid">
   <div class="tool-card">
     <h3><i class="bi bi-file-earmark-code"></i> Analyze a Script</h3>
-    <p class="lede">Nothing is executed &mdash; only static analysis and, optionally, IOC lookups against your configured providers.</p>
+    <p class="lede">Nothing is executed. The script is analyzed as text, and the indicators it contains are checked against your configured providers.</p>
 
     <form method="post" action="{{ url_for('do_analyze') }}" enctype="multipart/form-data" class="analyze-form">
       {# Paste on top, files under it. Both are kept short enough that Analyze
@@ -34,7 +34,7 @@
             <span class="file-btn"><i class="bi bi-paperclip"></i> Choose files</span>
           </label>
           <span class="file-name">No file chosen</span>
-          <span class="file-hint">&hellip;or drop files anywhere on this page &mdash;
+          <span class="file-hint">&hellip;or drop files anywhere on this page:
             .ps1 .txt .vbs .js .bat .cmd .log or .zip,
             up to {{ batch_limits.entries }} files, {{ batch_limits.entry_mb }}&nbsp;MB each.</span>
         </div>
@@ -78,7 +78,7 @@
 
   <div class="tool-card">
     <h3><i class="bi bi-search"></i> Quick IOC Lookup</h3>
-    <p class="lede">One IP, domain, URL or hash, checked straight against your configured providers.</p>
+    <p class="lede">One IP, domain, URL, hash or malware family, checked straight against your configured providers.</p>
 
     <form method="post" action="{{ url_for('do_lookup') }}" class="lookup-form"
           data-busy="Checking the indicator…" data-busy-note="Querying your configured threat-intel providers.">
@@ -99,22 +99,23 @@
       {% if lookup.scope_note %}<p class="lookup-note">{{ lookup.scope_note }}</p>{% endif %}
       {% if lookup.type is none %}
       {% elif not lookup.results %}
-        <p class="muted">No configured provider returned data for this {{ lookup.type }} ({{ lookup.value }}). Add API keys in <a href="{{ url_for('settings') }}">Settings</a> to enable lookups.</p>
+        {# Empty only when the value was ruled out before any provider was asked. #}
+        <p class="muted"><span class="mono">{{ lookup.value }}</span> ({{ lookup.type | type_label }}) was not sent to any provider, for the reason above.</p>
       {% else %}
-        <p class="muted">Results for {{ lookup.type.replace("_", " ") }} <span class="mono">{{ lookup.value }}</span>:</p>
+        <p class="muted">Results for <span class="mono">{{ lookup.value }}</span> ({{ lookup.type | type_label }}):</p>
         {# A row links to the provider's own page for this indicator where one
            exists, so "why?" is one click away rather than a manual search. #}
         {% for r in lookup.results %}
         {% if r.url %}
         <a class="lookup-result-row is-link" href="{{ r.url }}" target="_blank" rel="noopener noreferrer"
            data-no-busy title="Open {{ r.label }} for this indicator">
-          <span class="intel-badge badge-{{ r.verdict }}">{{ r.label }}: {{ r.verdict }}</span>
+          <span class="intel-badge badge-{{ r.verdict }}">{{ r.label }}: {{ r.verdict.replace("_", " ") }}</span>
           <span class="intel-detail">{{ r.detail }}</span>
           <i class="bi bi-box-arrow-up-right row-out"></i>
         </a>
         {% else %}
         <div class="lookup-result-row">
-          <span class="intel-badge badge-{{ r.verdict }}">{{ r.label }}: {{ r.verdict }}</span>
+          <span class="intel-badge badge-{{ r.verdict }}">{{ r.label }}: {{ r.verdict.replace("_", " ") }}</span>
           <span class="intel-detail">{{ r.detail }}</span>
         </div>
         {% endif %}

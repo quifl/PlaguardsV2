@@ -20,10 +20,8 @@ document.addEventListener("DOMContentLoaded", () => {
   const hideBusy = () => busy && busy.classList.remove("open");
   window.PlaguardsBusy = { show: showBusy, hide: hideBusy, flash: flashBusy };
 
-  /* Everything here is synchronous server-side work, so any navigation can
-     stall for a second or two. Rather than tagging each one, every form and
-     every link that leaves the page raises the overlay; `data-busy` /
-     `data-busy-note` override the wording and `data-no-busy` opts out. */
+  /* Server work is synchronous, so every form and outgoing link raises the
+     overlay. data-busy(-note) sets the wording; data-no-busy opts out. */
   const busyTextFor = (form, submitter) => {
     if (submitter && submitter.dataset.busy) return submitter.dataset.busy;
     if (form.dataset.busy) return form.dataset.busy;
@@ -91,7 +89,7 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   // Report options: keep the View/Download links in sync with the
-  // "Include IOC findings" toggle.
+  // "Redact IOC values" toggle.
   const iocToggle = document.getElementById("reportIocs");
   if (iocToggle) {
     const syncReportLinks = () => {
@@ -124,9 +122,8 @@ document.addEventListener("DOMContentLoaded", () => {
     const hasFiles = (e) =>
       e.dataTransfer && Array.from(e.dataTransfer.types).includes("Files");
 
-    /* The whole document is the drop target, not just the dashed box - there
-       is only ever one file input on a page, so anywhere is unambiguous. The
-       box still highlights so it is obvious where the files will land. */
+    /* The whole document is the drop target: a page has one file input, so
+       anywhere is unambiguous. The box still highlights where files land. */
     let depth = 0;
     document.addEventListener("dragenter", (e) => {
       if (!hasFiles(e)) return;
@@ -173,9 +170,9 @@ document.addEventListener("DOMContentLoaded", () => {
       const batch = files.length > 1 || zipped;
       batchNote.classList.toggle("is-active", batch);
       if (files.length > 1) {
-        batchNote.textContent = `${files.length} files selected — this is what you'll get back.`;
+        batchNote.textContent = `${files.length} files selected. This is what you'll get back.`;
       } else if (zipped) {
-        batchNote.textContent = "An archive is selected — this is what you'll get back.";
+        batchNote.textContent = "An archive is selected. This is what you'll get back.";
       } else {
         batchNote.textContent = "Choose files above and this decides what you get back.";
       }
@@ -197,9 +194,8 @@ document.addEventListener("DOMContentLoaded", () => {
     syncTarget();
   }
 
-  // Custom up/down buttons drawn over a number input, standing in for its
-  // hidden native spinner - stepUp/stepDown already respect min/max/step,
-  // so there's no arithmetic to duplicate here.
+  // Custom buttons over a number input's hidden spinner. stepUp/stepDown already
+  // respect min/max/step, so no arithmetic is duplicated here.
   document.querySelectorAll(".number-field").forEach((field) => {
     const input = field.querySelector("input[type=number]");
     field.querySelectorAll(".number-step").forEach((btn) => {

@@ -13,7 +13,7 @@ import ipaddress
 import re
 from dataclasses import dataclass, field
 
-from . import PlagEncode
+from . import PlagEncode, PlagMagic
 from .PlagRules import SIGNATURES
 
 COMMON_TLDS = {
@@ -28,27 +28,22 @@ COMMON_TLDS = {
     "mil", "int", "store", "tech", "space", "website", "fun", "host",
     "press", "email", "download", "stream", "party", "science", "work",
     "monster", "rest", "sbs", "lol",
-    # RFC 2606 / RFC 6761 reserved names. They never resolve, so they show up
-    # constantly in safe samples and write-ups - worth surfacing rather than
-    # silently dropping.
+    # RFC 2606 / 6761 reserved names never resolve and fill safe samples, so
+    # they are surfaced rather than dropped.
     "invalid", "example", "test", "localhost", "local", "internal",
 }
 
 _IPV4_RE = re.compile(
     r"\b(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)\b"
 )
-# The label repetition is bounded rather than open-ended: every pattern in
-# this module runs over attacker-supplied text, and an unbounded `+` over a
-# label group turns a long dotted run with no valid TLD ("a.a.a.a..." x N)
-# into quadratic backtracking - measured at 8s for 16k labels before the
-# bound, linear after. 16 labels is far past any real FQDN.
+# Bounded, not `+`: over attacker text an unbounded label group backtracks
+# quadratically on "a.a.a..." with no TLD. 16 is past any real FQDN.
 _DOMAIN_RE = re.compile(
     r"\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.){1,16}[a-zA-Z]{2,24}\b"
 )
 _URL_RE = re.compile(r"\b(?:https?|ftp)://[^\s'\"<>)\]}]+", re.IGNORECASE)
-# Same treatment: the old host part was `[A-Za-z0-9.-]+\.`, whose dot is in
-# both halves, so a dotted run with no TLD backtracked over every dot. Each
-# label class here excludes the dot, which makes the split unambiguous.
+# Label classes exclude the dot, so a dotted run with no TLD cannot
+# backtrack over every dot.
 _EMAIL_RE = re.compile(
     r"\b[A-Za-z0-9._%+-]{1,64}@(?:[A-Za-z0-9-]{1,63}\.){1,8}[A-Za-z]{2,24}\b"
 )
@@ -61,13 +56,11 @@ _MD5_RE = re.compile(r"\b[a-fA-F0-9]{32}\b")
 _IP_PORT_RE = re.compile(
     r"\b((?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)):(\d{1,5})\b"
 )
-# Either a full browser-style UA string, or a bare product token such as
-# "EVILBOT/1.0". The lookbehind keeps it from matching version fragments
-# inside a URL path.
+# A full browser UA, or a bare product token such as "EVILBOT/1.0". The
+# lookbehind skips version fragments inside a URL path.
 _USER_AGENT_RE = re.compile(
-    # Browser-style UA. Stops at a quote/newline/pipe/semicolon, and also
-    # before the next "KEY=" field so it doesn't swallow the rest of a
-    # summary line such as "UA=... MUTEX=... PORT=...".
+    # Stops at a quote, newline, pipe or semicolon, and before the next "KEY="
+    # field, so "UA=... MUTEX=..." is not swallowed whole.
     r"Mozilla/\d\.\d(?:(?!\s+[A-Za-z][A-Za-z0-9_]*=)[^\"'\n|;]){0,200}"
     # Or a bare product token like "EVILBOT/1.0". The lookbehind keeps it
     # from matching a version fragment inside a URL path.
@@ -81,17 +74,8 @@ _MUTEX_RE = re.compile(r"\b(?:Global|Local)\\[A-Za-z0-9_.\-{}]{3,100}")
 # flagging - it just can't be looked up directly.
 _HASH_PARTIAL_RE = re.compile(r"\b[a-fA-F0-9]{16,31}\b|\b[a-fA-F0-9]{33,39}\b|\b[a-fA-F0-9]{41,63}\b")
 
-# --- IPv6 -----------------------------------------------------------------
-# Matched loosely, then validated with the standard library. A hand-written
-# hextet grammar either misses a legal `::` elision or accepts something that
-# merely looks like one, and a wrong address here becomes a false indicator
-# in an analyst-facing report - so the grammar is delegated to `ipaddress`.
-#
-# The lookbehind refuses a match glued to a word character or a `]`, which is
-# what keeps PowerShell's static-member syntax out: `[Convert]::FromBase64String`
-# and `$x::Add` would otherwise offer `::Add` as a perfectly legal address.
-# The lookahead demands two colons up front so a bare IPv4 or a clock time
-# never even becomes a candidate.
+# IPv6, validated by `ipaddress`. The lookbehind rejects `[Convert]::Add`
+# member syntax; the lookahead needs two colons, so IPv4 and times never qualify.
 _IPV6_CANDIDATE_RE = re.compile(
     r"(?<![0-9A-Za-z:.\]])"
     r"(?=[0-9A-Fa-f]{0,4}:[0-9A-Fa-f]{0,4}:)"
@@ -105,17 +89,13 @@ _IPV6_PORT_RE = re.compile(
     r"\[([0-9A-Fa-f:]{2,45}(?:\.\d{1,3}){0,3})\]:(\d{1,5})(?!\d)"
 )
 
-# --- Cryptocurrency wallets ----------------------------------------------
-# Base58 deliberately omits 0/O/I/l so the alphabet itself is a filter, but
-# structure alone is not enough for the short legacy form - see
-# `_base58check_ok`, which is what actually keeps precision high.
+# Cryptocurrency wallets. Base58's alphabet is a filter, but the short legacy
+# form also needs `_base58check_ok` to keep precision up.
 _BTC_BASE58_RE = re.compile(r"(?<![A-Za-z0-9])[13][1-9A-HJ-NP-Za-km-z]{25,34}(?![A-Za-z0-9])")
 # bech32/bech32m: lowercase only, and the charset drops 1/b/i/o.
 _BTC_BECH32_RE = re.compile(r"(?<![A-Za-z0-9])bc1[ac-hj-np-z02-9]{11,71}(?![A-Za-z0-9])")
-# The `0x` prefix is required. A bare 40-hex run is indistinguishable from a
-# SHA-1 digest, and claiming one is a wallet would invent an indicator; with
-# the prefix there is no overlap at all, because `_SHA1_RE`'s leading \b
-# cannot fall between the `x` and the first hex digit.
+# The `0x` prefix is required: a bare 40-hex run is indistinguishable from a
+# SHA-1, and calling it a wallet would invent an indicator.
 _ETH_RE = re.compile(r"(?<![A-Za-z0-9])0x[a-fA-F0-9]{40}(?![A-Za-z0-9])")
 # Monero: 95 chars standard/subaddress, 106 with an integrated payment id.
 _XMR_RE = re.compile(
@@ -128,11 +108,8 @@ _BASE58_INDEX = {char: i for i, char in enumerate(_BASE58_ALPHABET)}
 _BECH32_CHARSET = "qpzry9x8gf2tvdw0s3jn54khce6mua7l"
 _BECH32_GENERATOR = (0x3B6A57B2, 0x26508E6D, 0x1EA119FA, 0x3D4233DD, 0x2A1462B3)
 
-# --- Filesystem paths -----------------------------------------------------
-# One root alternation shared by the quoted and unquoted forms: a drive
-# letter, a UNC host, an expanded %VAR%, or PowerShell's $env: accessor. The
-# single-letter drive branch is what stops `HKLM:\SOFTWARE\...` matching,
-# since the lookbehind sees the preceding `M`.
+# Filesystem paths: a drive letter, UNC host, %VAR% or $env: root. The
+# single-letter drive branch is what keeps `HKLM:\SOFTWARE` out.
 _PATH_ROOT = (
     r"(?:[A-Za-z]:\\"
     r"|\\\\[A-Za-z0-9][A-Za-z0-9._-]{0,62}\\"
@@ -140,9 +117,8 @@ _PATH_ROOT = (
     r"|\$[Ee][Nn][Vv]:[A-Za-z_][A-Za-z0-9_]{0,30}\\)"
 )
 _PATH_SEGMENT = r"[^\\/:*?\"<>|\r\n\s]"
-# Unquoted: whitespace ends the path. Allowing spaces here would swallow the
-# prose after it ("copy to C:\Temp\x.exe then run"), and a path with words
-# glued on is a wrong value, not a partial one.
+# Unquoted, whitespace ends the path: allowing spaces would glue the prose
+# after it onto the value.
 _WINDOWS_PATH_RE = re.compile(
     rf"(?<![A-Za-z0-9._\\]){_PATH_ROOT}"
     rf"(?:{_PATH_SEGMENT}{{1,120}}\\){{0,24}}{_PATH_SEGMENT}{{1,120}}"
@@ -153,11 +129,8 @@ _QUOTED_PATH_RE = re.compile(
 )
 _PATH_TRAILING_JUNK = ".,;:)]}'\"`"
 
-# --- Named persistence artefacts -----------------------------------------
-# The persistence *command* is already a signature rule; this pulls out the
-# NAME, which is what an incident responder actually sweeps an estate for.
-# Quoted forms are listed first so the quotes are consumed rather than
-# becoming part of the name.
+# Named persistence artefacts: the name is what a responder sweeps for.
+# Quoted forms come first so the quotes are consumed, not kept.
 _ARTEFACT_NAME = r"(?:\"([^\"\r\n]{1,120})\"|'([^'\r\n]{1,120})'|([^\s'\"\r\n]{1,120}))"
 _SCHEDULED_TASK_RE = re.compile(
     rf"(?:/tn[:=\s]|\B-TaskName\b)\s*{_ARTEFACT_NAME}", re.IGNORECASE
@@ -167,7 +140,7 @@ _SERVICE_NAME_RE = re.compile(
     re.IGNORECASE,
 )
 
-# --- Residual Base64 ------------------------------------------------------
+# Residual Base64
 # Long enough that ordinary identifiers, GUIDs and digests cannot reach it.
 MIN_RESIDUAL_B64_LEN = 64
 # Above this many same-type findings the prefix collapse is skipped - see
@@ -292,7 +265,9 @@ def _artefact_name(match: re.Match) -> str | None:
         return None
     if name[0] in "-/":
         return None
-    if "$" in name or "`" in name or "(" in name:
+    # Braces catch the -f operator's placeholders: `/TN "{1}"` yields "{1}",
+    # a scheduled task that does not exist.
+    if any(ch in name for ch in "$`({}"):
         return None
     if not any(char.isalnum() for char in name):
         return None
@@ -303,9 +278,8 @@ def _artefact_name(match: re.Match) -> str | None:
 # before they end up in a shareable document.
 _DEFANGABLE = {"ip", "ip_port", "ipv6_port", "domain", "url", "email"}
 
-# Types whose separator is the colon rather than the dot. Bracketing dots
-# does nothing to an IPv6 address, so those need the `[:]` form that
-# `_REFANG_RULES` already knows how to undo.
+# Types separated by colons, not dots: bracketing dots does nothing to IPv6,
+# so these take the `[:]` form `_REFANG_RULES` already undoes.
 _COLON_DEFANGABLE = {"ip", "ipv6_port"}
 
 
@@ -318,10 +292,8 @@ def defang(value: str, ioc_type: str | None = None) -> str:
         return value
     if ioc_type is not None and ioc_type not in _DEFANGABLE:
         return value
-    # `ip_port` and `url` are excluded by type rather than by shape: their
-    # colons are structural (port separator, scheme) and bracketing those
-    # would corrupt the value. With no type given, only a value that really
-    # parses as IPv6 takes this branch.
+    # `ip_port` and `url` are excluded because their colons are structural. With
+    # no type, only a value that parses as IPv6 takes this branch.
     if value.count(":") >= 2 and (
         ioc_type in _COLON_DEFANGABLE
         or (ioc_type is None and _valid_ipv6(value))
@@ -343,9 +315,8 @@ def defang_text(text: str) -> str:
     spans: list[tuple[int, int, str]] = []
     taken = _Spans()
 
-    # Longest/most specific patterns first so a URL isn't split into a bare
-    # domain, an IP:port isn't reduced to just the IP, and an IPv4-mapped
-    # IPv6 address isn't reduced to the embedded v4 half.
+    # Most specific first, so a URL is not cut to a bare domain, IP:port to an IP,
+    # or an IPv4-mapped IPv6 to its v4 half.
     for pattern, kind in ((_URL_RE, "url"), (_EMAIL_RE, "email"),
                           (_IPV6_PORT_RE, "ipv6_port"),
                           (_IP_PORT_RE, "ip_port"),
@@ -443,10 +414,8 @@ def classify_value(value: str) -> str | None:
     return None
 
 
-# What the lookup form offers, and the finding type each maps onto. "hash"
-# resolves to a specific digest by length; "signature" is a malware family
-# name (AgentTesla, Formbook, ...) rather than an indicator that can be
-# recognised by shape, which is exactly why it needs choosing by hand.
+# The lookup form's types. "hash" resolves by digest length; "signature" is a
+# family name with no shape to detect, so it is only reachable by hand.
 LOOKUP_TYPES = [
     ("auto", "Detect automatically"),
     ("ip", "IP address"),
@@ -571,6 +540,10 @@ def _b64_plaintexts(blob: str) -> list[str]:
         # report and the decoders agree on what counts as decoded.
         if decoded.strip() and PlagEncode.looks_like_text(decoded.encode("utf-8", "replace")):
             out.append(decoded.strip())
+    # A compressed or XOR'd stage only reads as text at the end of its recipe.
+    result = PlagMagic.magic(blob)
+    if result is not None:
+        out.append(result.output.strip()[:64])
     return out
 
 
@@ -617,11 +590,36 @@ def _residual_b64_findings(texts: list[str], claimed: set[str]) -> list[Finding]
                 "base64_blob", shown, _context(text, m.start(), m.end()),
                 severity="info", mitre=["T1027.010", "T1140"],
                 description=f"A {len(blob)}-character Base64 run survived deobfuscation and "
-                            f"could not be decoded statically - static analysis stops here, "
+                            f"could not be decoded statically. Static analysis stops here, "
                             f"so treat the rest of the report as incomplete for this branch."
                             + (" Value truncated for display." if len(blob) > 96 else ""),
             ))
     return found
+
+
+# A literal a transform consumes is an ingredient, not an indicator. Only the
+# original is masked; an unresolved call is still scanned in the deobfuscated text.
+_TRANSFORM_METHOD = (
+    "Insert|Remove|Replace|Substring|Trim|TrimStart|TrimEnd|PadLeft|PadRight"
+)
+_CONSTRUCTION_INPUT_RE = re.compile(
+    r"(?P<q>['\"])(?P<body>(?:[^'\"`\n]|`.){4,})(?P=q)"
+    r"(?:\s*\.\s*(?:%s)\s*\(|\s+-(?:c|i)?replace\b)" % _TRANSFORM_METHOD,
+    re.IGNORECASE,
+)
+
+
+def _mask_construction_inputs(text: str) -> str:
+    """Blank the contents of literals that feed a string transform.
+
+    Replaced character-for-character rather than deleted, so later offsets
+    and context snippets still line up.
+    """
+    def repl(m: re.Match) -> str:
+        body = m.group("body")
+        return m.group(0).replace(body, " " * len(body), 1)
+
+    return _CONSTRUCTION_INPUT_RE.sub(repl, text)
 
 
 def scan(original: str, deobfuscated: str, resolved: str = "") -> list[Finding]:
@@ -638,7 +636,7 @@ def scan(original: str, deobfuscated: str, resolved: str = "") -> list[Finding]:
 
     # Resolved values first: the same indicator found there and in the raw
     # text is kept from there, where it is already whole.
-    sources = [deobfuscated, original]
+    sources = [deobfuscated, _mask_construction_inputs(original)]
     if resolved:
         sources.insert(0, resolved)
 
@@ -649,7 +647,7 @@ def scan(original: str, deobfuscated: str, resolved: str = "") -> list[Finding]:
         for m in _IP_PORT_RE.finditer(text):
             add(Finding("ip_port", m.group(0), _context(text, m.start(), m.end()),
                          severity="low", defanged=was_defanged,
-                         description="An IP address with an explicit port - a likely C2 endpoint."))
+                         description="An IP address with an explicit port: a likely C2 endpoint."))
 
         for m in _IPV4_RE.finditer(text):
             add(Finding("ip", m.group(0), _context(text, m.start(), m.end()),
@@ -658,15 +656,11 @@ def scan(original: str, deobfuscated: str, resolved: str = "") -> list[Finding]:
         for m in _IPV6_PORT_RE.finditer(text):
             if not _valid_ipv6(m.group(1)) or not 0 < int(m.group(2)) <= 65535:
                 continue
-            # The endpoint deliberately does NOT reuse `ip_port`: every
-            # consumer of that type recovers the host with rsplit(":", 1),
-            # which on a bracketed address yields "[2001:db8::1]" and then an
-            # "invalid address" row in the geolocation table. The bare address
-            # is added alongside so geolocation still gets something it can
-            # resolve.
+            # Not `ip_port`: its consumers split the host with rsplit(":", 1), which on a
+            # bracketed address breaks geolocation. The bare address is added alongside.
             add(Finding("ipv6_port", m.group(0), _context(text, m.start(), m.end()),
                          severity="low", defanged=was_defanged,
-                         description="An IPv6 address with an explicit port - a likely C2 endpoint."))
+                         description="An IPv6 address with an explicit port: a likely C2 endpoint."))
             add(Finding("ip", m.group(1), _context(text, m.start(), m.end()),
                          defanged=was_defanged))
 
@@ -684,7 +678,7 @@ def scan(original: str, deobfuscated: str, resolved: str = "") -> list[Finding]:
         for m in _REGISTRY_RE.finditer(text):
             add(Finding("registry_key", m.group(0), _context(text, m.start(), m.end()),
                          severity="medium", mitre=["T1547.001"],
-                         description="A registry path referenced by the script - Run keys are a common persistence point."))
+                         description="A registry path referenced by the script. Run keys are a common persistence point."))
 
         for m in _MUTEX_RE.finditer(text):
             add(Finding("mutex", m.group(0), _context(text, m.start(), m.end()),
@@ -720,25 +714,25 @@ def scan(original: str, deobfuscated: str, resolved: str = "") -> list[Finding]:
         for m in _HASH_PARTIAL_RE.finditer(text):
             add(Finding("hash_partial", m.group(0), _context(text, m.start(), m.end()),
                          severity="low",
-                         description="A truncated hash prefix - not directly resolvable against "
+                         description="A truncated hash prefix: not directly resolvable against "
                                      "threat-intel sources, but useful for correlation."))
 
         for value, currency, span in _wallet_candidates(text):
             add(Finding("crypto_wallet", value, _context(text, *span),
                          severity="high", mitre=["T1657"],
-                         description=f"A {currency} wallet address - a ransom or stealer "
+                         description=f"A {currency} wallet address: a ransom or stealer "
                                      f"payout destination, and a pivot across campaigns."))
 
         for value, kind, span in _path_candidates(text):
             if kind == "unc_path":
                 add(Finding("unc_path", value, _context(text, *span),
                              severity="medium", mitre=["T1021.002"],
-                             description="A UNC share path - lateral movement or exfiltration "
+                             description="A UNC share path: lateral movement or exfiltration "
                                          "to a remote host over SMB."))
             else:
                 add(Finding("file_path", value, _context(text, *span),
                              severity="low",
-                             description="A filesystem path referenced by the script - a staging, "
+                             description="A filesystem path referenced by the script: a staging, "
                                          "drop or output location worth sweeping for."))
 
         for m in _SCHEDULED_TASK_RE.finditer(text):
@@ -747,15 +741,15 @@ def scan(original: str, deobfuscated: str, resolved: str = "") -> list[Finding]:
                 add(Finding("scheduled_task", name, _context(text, m.start(), m.end()),
                              severity="medium", mitre=["T1053.005"],
                              description="The name of a scheduled task the script creates or "
-                                         "touches - hunt for it by name across the estate."))
+                                         "touches. Hunt for it by name across the estate."))
 
         for m in _SERVICE_NAME_RE.finditer(text):
             name = _artefact_name(m)
             if name:
                 add(Finding("service_name", name, _context(text, m.start(), m.end()),
                              severity="medium", mitre=["T1543.003"],
-                             description="The name of a Windows service the script creates - "
-                                         "hunt for it by name across the estate."))
+                             description="The name of a Windows service the script creates. "
+                                         "Hunt for it by name across the estate."))
 
         for sig in _COMPILED_SIGNATURES:
             for m in sig["regex"].finditer(raw_text):
@@ -768,10 +762,8 @@ def scan(original: str, deobfuscated: str, resolved: str = "") -> list[Finding]:
                     description=sig["description"],
                 ))
 
-    # Run once, and only over what came *out* of the pipeline: a blob that was
-    # decoded no longer appears there, which is what keeps this from firing on
-    # successfully-resolved Base64. Wallet values are excluded because a
-    # 95-character Monero address is also a legal Base64 run.
+    # Only over pipeline output, where a decoded blob no longer appears. Wallets
+    # are excluded: a 95-character Monero address is also a legal Base64 run.
     residual_sources = [t for t in (deobfuscated, resolved) if t]
     wallet_values = {f.value for f in findings.values() if f.type == "crypto_wallet"}
     for blob_finding in _residual_b64_findings(residual_sources, wallet_values):
@@ -795,17 +787,24 @@ def _drop_prefix_duplicates(found: list[Finding]) -> list[Finding]:
     for f in found:
         if f.type in collapsible:
             peers.setdefault(f.type, []).append(f.value)
+    # A hash split into pieces and joined back yields the full digest and each
+    # piece; a piece of a digest that is already reported adds nothing.
+    full_hashes = [f.value.lower() for f in found
+                   if f.type in ("hash_md5", "hash_sha1", "hash_sha256")]
 
     keep = []
     for f in found:
+        if f.type == "hash_partial":
+            piece = f.value.lower()
+            if not any(piece in digest for digest in full_hashes):
+                keep.append(f)
+            continue
         if f.type not in collapsible:
             keep.append(f)
             continue
         same_type = peers[f.type]
-        # The containment test is quadratic in the number of same-type
-        # findings. Below the cap that is a handful of comparisons; above it,
-        # a generated script with thousands of paths would stall the scan, and
-        # showing a few redundant prefixes is the cheaper failure.
+        # The containment test is quadratic, so it is skipped above the cap: a few
+        # redundant prefixes are cheaper than a stalled scan.
         if len(same_type) <= _COLLAPSE_LIMIT and any(
             other != f.value and f.value in other for other in same_type
         ):
