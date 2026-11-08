@@ -6,6 +6,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import io
+import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -131,8 +132,10 @@ def _as_dict(f, index: int) -> dict:
             "description": f.description,
             "defanged": f.defanged,
             "intel": f.intel,
+            "layer": getattr(f, "layer", ""),
         }
     d.setdefault("triage_status", "unreviewed")
+    d["layer"] = d.get("layer") or ""
     d.setdefault("triage_note", "")
     d.setdefault("intel", {})
     d["n"] = index
@@ -297,17 +300,56 @@ def _numbered_lines(text: str) -> list[dict]:
     return rows
 
 
-# Transforms are written "Pass N: ..."; anything else in pass_log is a caveat
-# about the analysis, and counting it would present a caveat as a decode.
-_TRANSFORM_PREFIX = "Pass "
+# Transforms are written "Pass N: ..." ("[layer 2] Pass N: ..." for a stage);
+# anything else in pass_log is a caveat about the analysis, and counting it
+# would present a caveat as a decode.
+_TRANSFORM_RE = re.compile(r"^(?:\[layer \d+\] )?Pass ")
 
 
 def _transform_entries(pass_log: list) -> list:
-    return [e for e in pass_log if str(e).startswith(_TRANSFORM_PREFIX)]
+    return [e for e in pass_log if _TRANSFORM_RE.match(str(e))]
 
 
 def _status_entries(pass_log: list) -> list:
-    return [e for e in pass_log if not str(e).startswith(_TRANSFORM_PREFIX)]
+    return [e for e in pass_log if not _TRANSFORM_RE.match(str(e))]
+
+
+def layer_rows(layers: dict | None, findings: list) -> list[dict]:
+    """One row per layer for the report's Layers section; empty when the
+    analysis has no stages (legacy pipeline, or nothing was handed off)."""
+    if not layers or len(layers.get("artifacts") or []) < 2:
+        return []
+    counts: dict[str, int] = {}
+    for f in findings:
+        path = (f.get("layer") if isinstance(f, dict) else getattr(f, "layer", "")) or "1"
+        counts[path] = counts.get(path, 0) + 1
+    rows = []
+    for art in layers["artifacts"]:
+        how = art.get("edge") or "submitted input"
+        if art.get("edge_detail"):
+            how += f": {art['edge_detail']}"
+        rows.append({
+            "id": art["id"], "parent": art.get("parent_id") or "", "language": art["language"],
+            "how": how, "depth": art["depth"], "size": art["size"],
+            "indicators": counts.get(art.get("layer_path", ""), 0),
+            "flags": ", ".join(art.get("flags") or []),
+        })
+    return rows
+
+
+def layer_notes(layers: dict | None) -> list[str]:
+    """Limits the layered run hit and what it left for review, in words."""
+    if not layers:
+        return []
+    notes = [f"Limit reached ({hit['limit']}) in layer {hit['artifact_id']}: {hit['detail']}"
+             for hit in layers.get("limits_hit") or []]
+    if layers.get("needs_review"):
+        notes.append(f"{len(layers['needs_review'])} transform(s) applied with moderate confidence; "
+                     f"review them against the original")
+    if layers.get("rejected"):
+        notes.append(f"{len(layers['rejected'])} proposed transform(s) or stage(s) were rejected "
+                     f"by a safety gate and left as written")
+    return notes
 
 
 def _source_line(analysis: dict) -> str:
@@ -354,8 +396,11 @@ def build_report_context(analysis: dict, analyst_name: str = "", utc_offset: flo
     # the same defanging treatment as the findings table.
     resolved_vars = analysis.get("resolved_vars") or {}
     resolved_display = [_resolved_row(name, value) for name, value in resolved_vars.items()]
+    rows = layer_rows(analysis.get("layers"), findings)
 
     return {
+        "layer_rows": rows,
+        "layer_notes": layer_notes(analysis.get("layers")) if rows else [],
         "analysis": normalized,
         "grouped_findings": grouped,
         "redact_iocs": redact_iocs,
@@ -375,7 +420,7 @@ def build_report_context(analysis: dict, analyst_name: str = "", utc_offset: flo
         "deobfuscated_raw_lines": _numbered_lines(
             analysis.get("deobfuscated_raw") or analysis.get("deobfuscated", "")
         ),
-        "toc": _toc(bool(grouped)),
+        "toc": _toc(bool(grouped), bool(rows)),
         "resolved_vars": resolved_vars,
         "resolved_display": resolved_display,
         "pass_log_display": [
@@ -397,24 +442,27 @@ _SECTIONS = [
     ("indicators", "Indicators at a glance", "Indicators at a glance"),
     ("details", "Finding details", "Finding details"),
     ("deobfuscation", "Deobfuscation", "Deobfuscation"),
+    ("layers", "Layers of the input", "Layers"),
     ("appendix-a", "Appendix A", "Appendix A: Deobfuscated script"),
     ("appendix-b", "Appendix B", "Appendix B: Original input"),
 ]
 
 
-def _sections_for(has_grouped_findings: bool):
-    """Finding details only exists when there is something to detail."""
-    return [s for s in _SECTIONS if has_grouped_findings or s[0] != "details"]
+def _sections_for(has_grouped_findings: bool, has_layers: bool = False):
+    """Finding details only exists when there is something to detail, and
+    Layers only when the input held more than one."""
+    return [s for s in _SECTIONS
+            if (has_grouped_findings or s[0] != "details") and (has_layers or s[0] != "layers")]
 
 
-def _toc(has_grouped_findings: bool) -> list[dict]:
+def _toc(has_grouped_findings: bool, has_layers: bool = False) -> list[dict]:
     """Contents entries for a single-analysis report."""
     return [
         {
             "anchor": f"sec-{slug}", "heading": heading, "title": title,
             "number": str(i), "level": 1,
         }
-        for i, (slug, heading, title) in enumerate(_sections_for(has_grouped_findings), 1)
+        for i, (slug, heading, title) in enumerate(_sections_for(has_grouped_findings, has_layers), 1)
     ]
 
 
@@ -436,7 +484,8 @@ def _combined_toc(sections: list[dict]) -> list[dict]:
         })
         # No "Analysis Summary" sub-entry: in a combined report the analysis heading
         # is the summary, so the entry would point at nothing.
-        subs = [s for s in _sections_for(bool(section.get("grouped_findings")))
+        subs = [s for s in _sections_for(bool(section.get("grouped_findings")),
+                                         bool(section.get("layer_rows")))
                 if s[0] != "summary"]
         for j, (slug, heading, title) in enumerate(subs, 1):
             entries.append({

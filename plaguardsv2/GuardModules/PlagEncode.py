@@ -24,6 +24,33 @@ _ESCAPE_RE = re.compile(
 )
 
 
+def decode_script(raw: bytes) -> str:
+    """Text for a submitted file, honouring its byte-order mark.
+
+    PowerShell writes UTF-16LE with a BOM by default, and a UTF-16 script read
+    as UTF-8 is a NUL between every character - unreadable to every pass. A
+    UTF-16 file without a BOM is recognised by its NULs falling on one side.
+    """
+    if raw.startswith(b"\xef\xbb\xbf"):
+        return raw[3:].decode("utf-8", errors="replace")
+    if raw.startswith((b"\xff\xfe\x00\x00", b"\x00\x00\xfe\xff")):
+        codec = "utf-32-le" if raw[0] == 0xFF else "utf-32-be"
+        return raw[4:].decode(codec, errors="replace")
+    if raw.startswith(b"\xff\xfe"):
+        return raw[2:].decode("utf-16-le", errors="replace")
+    if raw.startswith(b"\xfe\xff"):
+        return raw[2:].decode("utf-16-be", errors="replace")
+    if len(raw) >= 4 and len(raw) % 2 == 0:
+        sample = raw[:4096]
+        odd = sample[1::2].count(0) / (len(sample) // 2)
+        even = sample[0::2].count(0) / (len(sample) // 2)
+        if odd > 0.4 and even < 0.05:
+            return raw.decode("utf-16-le", errors="replace")
+        if even > 0.4 and odd < 0.05:
+            return raw.decode("utf-16-be", errors="replace")
+    return raw.decode("utf-8", errors="replace")
+
+
 def looks_like_text(raw: bytes) -> bool:
     """Would a human read this as text? Guards against 'decoding' a blob that
     merely happens to be valid Base64."""
@@ -33,14 +60,62 @@ def looks_like_text(raw: bytes) -> bool:
     return printable / len(raw) >= 0.85
 
 
+# A decompression bomb is a few kilobytes that inflate to gigabytes. Output is
+# measured with a bounded probe before the real decompression runs.
+MAX_INFLATE_BYTES = 64 * 1024 * 1024
+
+
+def inflated_size_ok(raw: bytes, wbits: int, cap: int = MAX_INFLATE_BYTES) -> bool:
+    """Would decompressing `raw` stay within `cap` bytes? Gzip members are
+    walked one by one, since gzip.decompress inflates every one of them."""
+    data = raw
+    total = 0
+    while data:
+        d = zlib.decompressobj(wbits)
+        try:
+            total += len(d.decompress(data, cap + 1 - total))
+        except zlib.error:
+            return True   # not a valid stream: the real call fails the same way
+        if total > cap or (d.unconsumed_tail and not d.eof):
+            return False
+        data = d.unused_data if wbits > zlib.MAX_WBITS and d.eof else b""
+        if data[:2] != b"\x1f\x8b":
+            break
+    return True
+
+
+def bounded_decompress(raw: bytes, max_output: int, max_ratio: int | None = None) -> tuple[bytes | None, str]:
+    """(output, "") for a gzip, zlib or raw-deflate stream within both bounds;
+    (None, reason) for a stream that is not one, or that would exceed them."""
+    candidates = [31] if raw[:2] == b"\x1f\x8b" else [zlib.MAX_WBITS, -zlib.MAX_WBITS]
+    for wbits in candidates:
+        d = zlib.decompressobj(wbits)
+        try:
+            out = d.decompress(raw, max_output + 1)
+        except zlib.error:
+            continue
+        if len(out) > max_output or (d.unconsumed_tail and not d.eof):
+            return None, f"inflates past {max_output} bytes"
+        if not d.eof:
+            continue
+        if max_ratio and len(out) > max_ratio * max(1, len(raw)):
+            return None, f"inflation ratio above {max_ratio}"
+        return out, ""
+    return None, "not a compressed stream"
+
+
 def maybe_decompress(raw: bytes) -> bytes:
     """Unwrap a gzip or zlib/deflate stage, leaving anything else alone."""
     if raw[:2] == b"\x1f\x8b":
+        if not inflated_size_ok(raw, 31):
+            return raw
         try:
             return gzip.decompress(raw)
         except Exception:
             return raw
     for wbits in (zlib.MAX_WBITS, -zlib.MAX_WBITS):
+        if not inflated_size_ok(raw, wbits):
+            return raw
         try:
             return zlib.decompress(raw, wbits)
         except Exception:

@@ -518,6 +518,12 @@
   </tr>
   {% endfor %}
   {% endif %}
+  {% if layer_rows and f.layer and f.layer != "1" %}
+  <tr>
+    <td class="dk">Found in</td>
+    <td>Layer {{ f.layer.split("/")[-1] }} (path {{ f.layer }}): see Layers</td>
+  </tr>
+  {% endif %}
   <tr>
     <td class="dk">Analyst verdict</td>
     <td class="c-{{ f.triage_status }}">{{ f.verdict_label }}{% if f.triage_note %} &nbsp;{{ f.triage_note }}{% endif %}</td>
@@ -573,6 +579,35 @@ obfuscation techniques that were detected but could not be fully resolved automa
   </tr>
   {% endfor %}
 </table>
+{% endif %}
+
+{% if layer_rows %}
+<h2 class="pb">Layers of the input</h2>
+<div class="subtitle">Each stage the input handed to another interpreter, or decoded into
+script, was opened as its own layer and read with the passes for its language. Layer 1
+is the submitted input; Appendix A shows every layer under its own header.</div>
+<table class="grid">
+  <tr>
+    <th style="width:8%;">Layer</th><th style="width:8%;">From</th><th style="width:14%;">Language</th>
+    <th style="width:44%;">How it was reached</th><th style="width:12%;">Size</th><th style="width:14%;">Indicators</th>
+  </tr>
+  {% for row in layer_rows %}
+  <tr>
+    <td>{{ row.id }}</td>
+    <td>{{ row.parent if row.parent else "-" }}</td>
+    <td>{{ row.language }}</td>
+    <td>{{ row.how }}{% if row.flags %}<span class="sub">{{ row.flags }}</span>{% endif %}</td>
+    <td>{{ row.size }} bytes</td>
+    <td>{{ row.indicators }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% if layer_notes %}
+<h3>Limits and review</h3>
+<table class="grid">
+  {% for note in layer_notes %}<tr><td>{{ note }}</td></tr>{% endfor %}
+</table>
+{% endif %}
 {% endif %}
 
 <h2 class="pb">Appendix A: Deobfuscated script</h2>

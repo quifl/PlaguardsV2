@@ -156,11 +156,24 @@ def xlsx_available() -> bool:
     return True
 
 
-def to_xlsx(rows: list[dict], title: str = "Findings") -> bytes:
-    """The same table as a real spreadsheet - frozen header, filters, widths."""
+LAYER_COLUMNS = [
+    ("id", "Layer"), ("parent", "From layer"), ("language", "Language"),
+    ("how", "How it was reached"), ("depth", "Depth"), ("size", "Size (bytes)"),
+    ("indicators", "Indicators"), ("flags", "Flags"),
+]
+
+
+def to_xlsx(rows: list[dict], title: str = "Findings", layers: list[dict] | None = None) -> bytes:
+    """The same table as a real spreadsheet - frozen header, filters, widths.
+    `layers` (PlagReport.layer_rows) adds a Layers sheet for a layered analysis."""
     import openpyxl
+    from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
     from openpyxl.styles import Alignment, Font, PatternFill
     from openpyxl.utils import get_column_letter
+
+    def cell_text(value):
+        # XML 1.0 forbids most control characters; a sample's text can carry them.
+        return ILLEGAL_CHARACTERS_RE.sub("\ufffd", value) if isinstance(value, str) else value
 
     book = openpyxl.Workbook()
     sheet = book.active
@@ -182,7 +195,7 @@ def to_xlsx(rows: list[dict], title: str = "Findings") -> bytes:
     }
     for r, row in enumerate(rows, 2):
         for c, (key, _label) in enumerate(COLUMNS, 1):
-            value = row.get(key, "")
+            value = cell_text(row.get(key, ""))
             cell = sheet.cell(row=r, column=c, value=value)
             # openpyxl types a leading "=" as a formula, which Excel then
             # evaluates. Pinning to text keeps the value byte-for-byte.
@@ -200,6 +213,21 @@ def to_xlsx(rows: list[dict], title: str = "Findings") -> bytes:
 
     sheet.freeze_panes = "A2"
     sheet.auto_filter.ref = f"A1:{get_column_letter(len(COLUMNS))}{max(1, len(rows) + 1)}"
+
+    if layers:
+        extra = book.create_sheet("Layers")
+        for column, (_key, label) in enumerate(LAYER_COLUMNS, 1):
+            cell = extra.cell(row=1, column=column, value=label)
+            cell.font = header_font
+            cell.fill = header_fill
+        for r, layer in enumerate(layers, 2):
+            for c, (key, _label) in enumerate(LAYER_COLUMNS, 1):
+                value = cell_text(layer.get(key, ""))
+                cell = extra.cell(row=r, column=c, value=value)
+                if isinstance(value, str) and value.startswith(_FORMULA_LEAD):
+                    cell.data_type = "s"
+        extra.column_dimensions["D"].width = 48
+        extra.freeze_panes = "A2"
 
     out = io.BytesIO()
     book.save(out)

@@ -69,6 +69,34 @@
     {% endif %}
     <pre class="code-block">{{ analysis.deobfuscated }}</pre>
 
+    {% if layer_rows %}
+    <details class="pass-log-details" id="layers" open>
+      <summary>{{ layer_rows|length|plural("layer") }} in this input</summary>
+      <p class="muted" style="font-size:12px;margin:6px 0 0;">
+        Each stage handed to another interpreter, or decoded into script, was read as its
+        own layer with the passes for its language. Layer 1 is the submitted input; the
+        script above shows every layer under its own header.
+      </p>
+      <table class="resolved-table">
+        <tr><th>Layer</th><th>From</th><th>Language</th><th>How it was reached</th><th>Indicators</th></tr>
+        {% for row in layer_rows %}
+        <tr>
+          <td class="mono">{{ row.id }}</td>
+          <td class="mono">{{ row.parent if row.parent else "-" }}</td>
+          <td>{{ row.language }}</td>
+          <td>{{ row.how }}{% if row.flags %} <span class="muted">({{ row.flags }})</span>{% endif %}</td>
+          <td class="mono">{{ row.indicators }}</td>
+        </tr>
+        {% endfor %}
+      </table>
+      {% if layer_notes %}
+      <ul class="pass-log-notes">
+        {% for note in layer_notes %}<li>{{ note }}</li>{% endfor %}
+      </ul>
+      {% endif %}
+    </details>
+    {% endif %}
+
     {% if resolved_display %}
     <details class="pass-log-details" open>
       <summary>{{ resolved_display|length|plural("variable value") }} statically resolved</summary>
@@ -157,6 +185,7 @@
         <span class="badge sev-badge-{{ f.severity }}">{{ f.severity }}</span>
         <span class="finding-type">{{ f.type | type_label }}</span>
         <span class="finding-value mono">{{ f.value }}</span>
+        {% if layer_rows and f.layer and f.layer != "1" %}<span class="badge badge-unknown" title="Found in layer path {{ f.layer }}">layer {{ f.layer.split("/")[-1] }}</span>{% endif %}
         <span class="finding-chevron"><i class="bi bi-chevron-down"></i></span>
       </summary>
 

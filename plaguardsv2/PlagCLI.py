@@ -8,7 +8,7 @@ import sys
 
 import click
 
-from .GuardModules import PlagConfig, PlagEngine, PlagStore, PlagReport
+from .GuardModules import PlagConfig, PlagEncode, PlagEngine, PlagReport, PlagStore
 
 SEVERITY_COLOR = {"high": "red", "medium": "yellow", "low": "green", "info": "white"}
 VERDICT_COLOR = {
@@ -32,16 +32,36 @@ def cli():
 @click.option("--json", "json_path", type=click.Path(dir_okay=False), default=None, help="Write JSON results to this path.")
 @click.option("--redact-iocs", is_flag=True, help="Print indicator values black-on-black in the PDF (redacted copy).")
 @click.option("--db-path", type=click.Path(dir_okay=False), default=None, help="SQLite DB path (default: data/plaguardsv2.db).")
-def analyze(path, no_intel, no_cache, no_store, triage, pdf_path, json_path, redact_iocs, db_path):
+@click.option("--pipeline", type=click.Choice(PlagEngine.PIPELINES), default=None,
+              help=f"Deobfuscation pipeline (default: {PlagEngine.DEFAULT_PIPELINE}).")
+@click.option("--legacy-pipeline", is_flag=True, help="Same as --pipeline legacy: the single-text engine.")
+@click.option("--max-depth", type=click.IntRange(0, 64), default=None,
+              help="Deepest layer the layered pipeline opens (default: 12).")
+@click.option("--emulation", is_flag=True, help="Opt-in emulation of extracted functions (not available yet).")
+@click.option("--explain", is_flag=True, help="Print the layer tree and the provenance JSON.")
+def analyze(path, no_intel, no_cache, no_store, triage, pdf_path, json_path, redact_iocs, db_path,
+            pipeline, legacy_pipeline, max_depth, emulation, explain):
     """Analyze PATH, or stdin when PATH is omitted or '-'. Provider keys come
     from the dashboard's Settings page, or from .env."""
+    if emulation:
+        raise click.UsageError("--emulation is not available in this version; nothing was run.")
+    if legacy_pipeline:
+        if pipeline not in (None, "legacy"):
+            raise click.UsageError("--legacy-pipeline contradicts --pipeline " + pipeline)
+        pipeline = "legacy"
+    pipeline = pipeline or PlagEngine.DEFAULT_PIPELINE
+    if (max_depth is not None or explain) and pipeline != "layered":
+        raise click.UsageError("--max-depth and --explain need the layered pipeline")
+
     if path and path != "-":
-        with open(path, "r", encoding="utf-8", errors="replace") as fh:
-            text = fh.read()
+        with open(path, "rb") as fh:
+            text = PlagEncode.decode_script(fh.read())
         # The name only: a full path would put the analyst's folder layout on the report cover.
         filename = os.path.basename(path)
     else:
-        text = sys.stdin.read()
+        # Bytes, decoded like a file: `analyze - < script.ps1` may well be UTF-16.
+        stream = getattr(sys.stdin, "buffer", None)
+        text = PlagEncode.decode_script(stream.read()) if stream is not None else sys.stdin.read()
         filename = "stdin"
 
     conn = None
@@ -54,9 +74,13 @@ def analyze(path, no_intel, no_cache, no_store, triage, pdf_path, json_path, red
         skip_intel=no_intel,
         conn=conn,
         use_cache=not no_cache,
+        pipeline=pipeline,
+        max_depth=max_depth,
     )
 
     _print_summary(result)
+    if explain and result.get("layers"):
+        _print_explain(result["layers"])
 
     # The stored copy carries triage verdicts; the in-memory result never does.
     stored = PlagStore.get_analysis(conn, result["id"]) if conn is not None and result.get("id") else None
@@ -144,6 +168,29 @@ def _print_summary(result: dict) -> None:
             f"[{click.style(f.severity.upper(), fg=sev_color)}] "
             f"{f.type:<11} {f.value[:60]:<60} mitre={mitre} {intel_str}"
         )
+
+
+def _print_explain(layers: dict) -> None:
+    """The layer tree, then the full provenance JSON."""
+    click.echo(click.style("\n--- Layer tree ---", bold=True))
+    children: dict = {}
+    for art in layers["artifacts"]:
+        children.setdefault(art["parent_id"], []).append(art)
+
+    def walk(parent_id, indent):
+        for art in children.get(parent_id, []):
+            how = f" via {art['edge']}: {art['edge_detail']}" if art["edge"] else ""
+            flags = f" [{', '.join(art['flags'])}]" if art["flags"] else ""
+            click.echo(f"{'  ' * indent}layer {art['id']} {art['language']} "
+                       f"({art['size']} bytes, {art['rounds']} round(s)){how}{flags}")
+            walk(art["id"], indent + 1)
+
+    walk(None, 0)
+    for key in ("limits_hit", "needs_review", "rejected", "notes"):
+        if layers.get(key):
+            click.echo(f"{key}: {len(layers[key])}")
+    click.echo(click.style("\n--- Provenance (canonical JSON) ---", bold=True))
+    click.echo(json.dumps(layers, indent=2, default=str))
 
 
 def _interactive_triage(conn, result: dict) -> None:

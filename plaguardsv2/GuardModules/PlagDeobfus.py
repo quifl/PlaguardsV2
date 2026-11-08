@@ -212,6 +212,12 @@ class TransformRecord:
     after: str = ""
     assumed: bool = False
     iteration: int = 0
+    # Set by the layered pipeline only; the legacy pipeline leaves the defaults.
+    pass_id: str = ""
+    kind: str = ""
+    confidence: float = 1.0
+    gates: dict = field(default_factory=dict)
+    artifact_id: int = 0
 
 
 @dataclass
@@ -260,18 +266,13 @@ def _language_passes(source: str) -> list:
     return extra
 
 
-def run(source: str) -> DeobfuscationResult:
-    truncated = False
-    text = source
-    if len(text) > MAX_INPUT_SIZE:
-        text = text[:MAX_INPUT_SIZE]
-        truncated = True
+def core_passes() -> list:
+    """The PowerShell-and-everything passes, in the order run() applies them.
 
-    text = _normalize(text)
-    text, comments = _mask_comments(text)
-    log: list[str] = []
-
-    passes = [
+    Shared with the layered pipeline's legacy adapters, which must apply the
+    same functions in the same order to reproduce this engine's output.
+    """
+    return [
         ("propagated single-assignment literal variables", _propagate_literal_variables),
         ("resolved $ShellId (assumed default Windows PowerShell value)", _resolve_shellid),
         ("resolved well-known $env: value(s) (assumed default Windows values)", _resolve_env_variables),
@@ -295,12 +296,29 @@ def run(source: str) -> DeobfuscationResult:
         ("decoded standalone encoded payload(s)", _decode_standalone_payloads),
         ("recovered XOR-decoded byte-array payload", PlagLoader.recover_xor_loop),
     ]
-    passes += _language_passes(source)
+
+
+def fallback_passes() -> list:
     # Tried only in a round where no dedicated pass changed anything, so a
     # generic recipe search never pre-empts the decoder written for that case.
-    fallback_passes = [
+    return [
         ("decoded encoded run(s) with a CyberChef-style recipe", _magic_decode_runs),
     ]
+
+
+def run(source: str) -> DeobfuscationResult:
+    truncated = False
+    text = source
+    if len(text) > MAX_INPUT_SIZE:
+        text = text[:MAX_INPUT_SIZE]
+        truncated = True
+
+    text = _normalize(text)
+    text, comments = _mask_comments(text)
+    log: list[str] = []
+
+    passes = core_passes() + _language_passes(source)
+    fallback = fallback_passes()
 
     iterations = 0
     transforms: list[TransformRecord] = []
@@ -333,7 +351,7 @@ def run(source: str) -> DeobfuscationResult:
 
     for i in range(MAX_PASSES):
         iterations = i + 1
-        if not apply(passes, i + 1) and not apply(fallback_passes, i + 1):
+        if not apply(passes, i + 1) and not apply(fallback, i + 1):
             break
     else:
         # Out of rounds while still rewriting: the output is half-peeled, and saying
@@ -435,7 +453,9 @@ def _mask_comments(text: str) -> tuple[str, list[str]]:
 
 def _unmask_comments(text: str, comments: list[str]) -> str:
     def repl(m: re.Match) -> str:
-        return comments[int(m.group(1))]
+        # A token the masker never issued came with the input: leave it as written.
+        index = int(m.group(1))
+        return comments[index] if index < len(comments) else m.group(0)
 
     return _COMMENT_TOKEN_RE.sub(repl, text)
 
@@ -903,10 +923,14 @@ def _maybe_inflate(raw: bytes) -> bytes:
     shrink/obscure a staged payload before base64-encoding it), decompress
     them; otherwise return unchanged."""
     if raw[:2] == b"\x1f\x8b":
+        if not PlagEncode.inflated_size_ok(raw, 31):
+            return raw
         try:
             return gzip.decompress(raw)
         except Exception:
             return raw
+    if not PlagEncode.inflated_size_ok(raw, -zlib.MAX_WBITS):
+        return raw
     try:
         return zlib.decompress(raw, -zlib.MAX_WBITS)
     except Exception:

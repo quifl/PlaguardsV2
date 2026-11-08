@@ -10,9 +10,28 @@ error.
 from __future__ import annotations
 
 import base64
+import contextlib
+import contextvars
 import re
 
 from .PlagTokens import Token, tokenize
+
+# The layered pipeline evaluates a wider subset (ranges as values, .Length).
+# Scoped to its run, so the legacy pipeline's output stays byte-identical.
+_EXTENDED = contextvars.ContextVar("plaguards_eval_extended", default=False)
+
+
+@contextlib.contextmanager
+def extended():
+    token = _EXTENDED.set(True)
+    try:
+        yield
+    finally:
+        _EXTENDED.reset(token)
+
+
+def is_extended() -> bool:
+    return _EXTENDED.get()
 
 MAX_DEPTH = 40
 MAX_STRING_LEN = 200_000
@@ -238,6 +257,8 @@ class Parser:
         self.i = 0
         self.vars = variables
         self.depth = 0
+        # Inside an index spec `..` is a slice, read by _parse_index_spec.
+        self.no_range = False
 
     # helpers
     def peek(self, offset: int = 0) -> Token | None:
@@ -261,9 +282,12 @@ class Parser:
         return self.accept("punct", value)
 
     # grammar
-    def parse_expression(self):
+    def parse_expression(self, allow_range: bool = True):
         self.depth += 1
+        saved_no_range, self.no_range = self.no_range, not allow_range
         if self.depth > MAX_DEPTH:
+            self.depth -= 1
+            self.no_range = saved_no_range
             return UNKNOWN
         try:
             left = self.parse_additive()
@@ -309,6 +333,28 @@ class Parser:
             return left
         finally:
             self.depth -= 1
+            self.no_range = saved_no_range
+
+    def _parse_range(self):
+        """`a..b` as a value (extended mode): an inclusive range, descending
+        when b < a. It binds tighter than every arithmetic operator, as in
+        PowerShell: `1..3 + 4` is the array 1,2,3,4."""
+        left = self.parse_unary()
+        if self.no_range or not is_extended():
+            return left
+        dot, dot2 = self.peek(), self.peek(1)
+        if not (dot and dot.kind == "punct" and dot.value == "."
+                and dot2 and dot2.kind == "punct" and dot2.value == "."):
+            return left
+        self.next()
+        self.next()
+        right = self.parse_unary()
+        if any(isinstance(v, bool) or not isinstance(v, int) for v in (left, right)):
+            return UNKNOWN
+        if abs(right - left) + 1 > MAX_STRING_LEN:
+            return UNKNOWN
+        step = 1 if right >= left else -1
+        return list(range(left, right + step, step))
 
     def _apply_foreach(self, source):
         """Evaluate `| %{ <body> }` by running <body> once per input item
@@ -398,7 +444,7 @@ class Parser:
         Binds tighter than `+` so `[char]($_ -bxor $k) + "x"` groups the way
         PowerShell does.
         """
-        left = self.parse_unary()
+        left = self._parse_range()
         while True:
             tok = self.peek()
             if tok is None or tok.kind != "op":
@@ -407,7 +453,7 @@ class Parser:
             if op not in ("-bxor", "-band", "-bor", "-shl", "-shr"):
                 break
             self.next()
-            right = self.parse_unary()
+            right = self._parse_range()
             left = self._apply_bitwise(op, left, right)
         return left
 
@@ -643,10 +689,14 @@ class Parser:
                     and nxt and nxt.kind == "name"):
                 self.next()  # '.'
                 method = self.next().value.lower()
-                args = self._parse_arg_list()
-                if args is None:
-                    return UNKNOWN
-                value = self._apply_method(value, method, args)
+                after = self.peek()
+                if is_extended() and not (after and after.kind == "punct" and after.value == "("):
+                    value = _property(value, method)
+                else:
+                    args = self._parse_arg_list()
+                    if args is None:
+                        return UNKNOWN
+                    value = self._apply_method(value, method, args)
             elif tok and tok.kind == "punct" and tok.value == "[":
                 value = self._apply_index(value)
             else:
@@ -664,7 +714,7 @@ class Parser:
         indices: list[int] = []
         scalar = True
         while True:
-            first = self.parse_expression()
+            first = self.parse_expression(allow_range=False)
             if isinstance(first, bool) or not isinstance(first, int):
                 return None, False
 
@@ -674,7 +724,7 @@ class Parser:
             if is_range:
                 self.next()
                 self.next()
-                last = self.parse_expression()
+                last = self.parse_expression(allow_range=False)
                 if isinstance(last, bool) or not isinstance(last, int):
                     return None, False
                 # A descending range is how a script reverses a string, so the
@@ -796,6 +846,12 @@ class Parser:
         if left is UNKNOWN or right is UNKNOWN:
             return UNKNOWN
         try:
+            if is_extended() and isinstance(left, list) and not isinstance(right, bool):
+                # An array on the left appends (+) or repeats (*), as in PowerShell.
+                if op == "+" and isinstance(right, (int, str)) and len(left) < MAX_STRING_LEN:
+                    return left + [right]
+                if op == "*" and isinstance(right, int) and 0 <= right and len(left) * right <= MAX_STRING_LEN:
+                    return left * right
             if op == "+":
                 if isinstance(left, str) or isinstance(right, str):
                     if isinstance(left, list) or isinstance(right, list):
@@ -965,6 +1021,18 @@ class Parser:
         if unresolved:
             return UNKNOWN
         return _cap(result)
+
+
+def _property(value, name: str):
+    """`.Length` / `.Count` of a known string or array; anything else is
+    Unknown. A string is one object, so its Count is 1 (PowerShell 3+)."""
+    if value is UNKNOWN or name not in ("length", "count"):
+        return UNKNOWN
+    if isinstance(value, list):
+        return len(value)
+    if isinstance(value, str):
+        return 1 if name == "count" else len(value)
+    return UNKNOWN
 
 
 def _cap(value: str):

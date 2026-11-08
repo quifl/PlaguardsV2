@@ -112,6 +112,11 @@ def get_conn(db_path: Path | str | None = None) -> sqlite3.Connection:
     _ensure_column(conn, "analyses", "completed_at", "REAL")
     _ensure_column(conn, "analyses", "duration_ms", "REAL")
     _ensure_column(conn, "analyses", "status", "TEXT NOT NULL DEFAULT 'completed'")
+    # The layered pipeline: which pipeline produced the row, its layer tree as
+    # JSON, and the layer each finding came from. Empty for legacy rows.
+    _ensure_column(conn, "analyses", "pipeline", "TEXT NOT NULL DEFAULT 'legacy'")
+    _ensure_column(conn, "analyses", "layers_json", "TEXT NOT NULL DEFAULT ''")
+    _ensure_column(conn, "findings", "layer", "TEXT NOT NULL DEFAULT ''")
     conn.commit()
     return conn
 
@@ -132,28 +137,29 @@ def save_analysis(conn: sqlite3.Connection, filename: str, original_text: str,
                    deobfuscated_raw: str = "",
                    batch_id: int | None = None, status: str = "completed",
                    started_at: float | None = None, completed_at: float | None = None,
-                   duration_ms: float | None = None) -> int:
+                   duration_ms: float | None = None, pipeline: str = "legacy",
+                   layers_json: str = "") -> int:
     now = time.time()
     cur = conn.execute(
         "INSERT INTO analyses (created_at, filename, source_kind, original_text, "
         "deobfuscated_text, deobfuscated_raw, pass_log, resolved_vars, truncated, "
-        "batch_id, status, started_at, completed_at, duration_ms) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "batch_id, status, started_at, completed_at, duration_ms, pipeline, layers_json) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (now, filename, source_kind, original_text, deobfuscated_text,
          deobfuscated_raw or deobfuscated_text, json.dumps(pass_log),
          json.dumps(resolved_vars or {}), int(truncated),
          batch_id, status,
          started_at if started_at is not None else now,
          completed_at if completed_at is not None else now,
-         duration_ms),
+         duration_ms, pipeline, layers_json or ""),
     )
     analysis_id = cur.lastrowid
     for f in findings:
         fcur = conn.execute(
             "INSERT INTO findings (analysis_id, type, value, context, mitre, severity, "
-            "description, defanged) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "description, defanged, layer) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (analysis_id, f.type, f.value, f.context, json.dumps(f.mitre), f.severity,
-             f.description, int(f.defanged)),
+             f.description, int(f.defanged), getattr(f, "layer", "") or ""),
         )
         finding_id = fcur.lastrowid
         for source, result in getattr(f, "intel", {}).items():
@@ -201,6 +207,8 @@ def get_analysis(conn: sqlite3.Connection, analysis_id: int) -> dict | None:
         analysis.get("deobfuscated_raw") or analysis["deobfuscated_text"]
     )
     analysis["resolved_vars"] = json.loads(analysis.get("resolved_vars") or "{}")
+    analysis["pipeline"] = analysis.get("pipeline") or "legacy"
+    analysis["layers"] = json.loads(analysis["layers_json"]) if analysis.get("layers_json") else None
     if analysis.get("batch_id") is not None:
         brow = conn.execute("SELECT * FROM batches WHERE id = ?", (analysis["batch_id"],)).fetchone()
         analysis["batch"] = dict(brow) if brow else None

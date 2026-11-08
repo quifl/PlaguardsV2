@@ -296,6 +296,8 @@ def create_app(db_path: str | None = None) -> Flask:
             # Split as the report splits them: a note about the run is not a transform.
             transforms=PlagReport._transform_entries(data.get("pass_log") or []),
             run_notes=PlagReport._status_entries(data.get("pass_log") or []),
+            layer_rows=PlagReport.layer_rows(data.get("layers"), data["findings"]),
+            layer_notes=PlagReport.layer_notes(data.get("layers")),
         )
 
     @app.route("/analysis/<int:analysis_id>/finding/<int:finding_id>/triage", methods=["POST"])
@@ -402,7 +404,8 @@ def create_app(db_path: str | None = None) -> Flask:
             if not PlagTable.xlsx_available():
                 flash("Excel export needs openpyxl. Install it, or use CSV.", "error")
                 return redirect(url_for("view_analysis", analysis_id=analysis_id))
-            payload = PlagTable.to_xlsx(rows, title=f"Analysis {analysis_id}")
+            payload = PlagTable.to_xlsx(rows, title=f"Analysis {analysis_id}",
+                                        layers=PlagReport.layer_rows(data.get("layers"), data["findings"]))
             mimetype = ("application/vnd.openxmlformats-officedocument"
                         ".spreadsheetml.sheet")
         return Response(payload, mimetype=mimetype, headers={

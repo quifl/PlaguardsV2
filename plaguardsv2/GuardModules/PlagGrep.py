@@ -171,6 +171,8 @@ class Finding:
     description: str = ""
     defanged: bool = False
     intel: dict = field(default_factory=dict)
+    # Layered pipeline only: the artifact path ("1/2/3") the indicator was found in.
+    layer: str = ""
 
 
 def refang(text: str) -> str:
@@ -815,3 +817,17 @@ def _drop_prefix_duplicates(found: list[Finding]) -> list[Finding]:
 
 def _severity_rank(severity: str) -> int:
     return {"high": 3, "medium": 2, "low": 1, "info": 0}.get(severity, 0)
+
+
+def merge(groups: list[list[Finding]]) -> list[Finding]:
+    """One finding list from several scans (one per layer), deduplicated the
+    way scan() deduplicates within a text: first seen wins."""
+    found: dict[tuple[str, str], Finding] = {}
+    for group in groups:
+        for f in group:
+            found.setdefault((f.type, f.value.lower()), f)
+    return sorted(
+        _drop_prefix_duplicates(list(found.values())),
+        key=lambda f: (_severity_rank(f.severity), f.type, f.value.lower()),
+        reverse=True,
+    )

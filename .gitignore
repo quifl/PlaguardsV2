@@ -23,6 +23,7 @@ qa-output/
 # Developer-only: test suite, QA and maintenance tools, CI. Kept on the
 # maintainer's machine; none of it is needed to install or run PlaguardsV2.
 tests/
+docs/
 .github/
 pytest.ini
 requirements-dev.txt

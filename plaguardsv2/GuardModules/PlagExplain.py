@@ -127,6 +127,35 @@ EXPLANATIONS = [
      "Public IP addresses among the findings were located via the configured "
      "GeoLite2 database or ipinfo.io, to show whether the traffic's "
      "destination makes sense."),
+    # Layered pipeline.
+    ("own layer",
+     "A script handed to another interpreter (Invoke-Expression, powershell "
+     "-Command, cmd /c, eval, Execute) was taken out as its own layer, read with "
+     "the passes for its language, and its indicators traced to that layer."),
+    ("typographic quotes and dashes",
+     "Curly quotes and en/em dashes were written as plain ' \" and -. PowerShell "
+     "treats them as the same characters, so they only serve to dodge exact-text "
+     "matching."),
+    ("alias(es)",
+     "Command aliases (iex, iwr, irm, gci, % and others, plus any the script "
+     "defined with Set-Alias) were expanded to the cmdlet names they stand for."),
+    ("invoked through & or .",
+     "A command name written as a string and run with the call operator was "
+     "unquoted: & 'iex' and iex run the same command."),
+    ("cmd.exe order",
+     "The batch file was read in cmd.exe's own parsing order: %VAR% expansion, "
+     "then ^ escapes and quotes, then !VAR! delayed expansion and CALL's second "
+     "expansion, including substring and replace forms."),
+    ("never set in the script",
+     "Variables a batch file never sets expand to nothing, which is how junk "
+     "%names% are used to break up keywords. Marked as assumed: the host could "
+     "in principle define one."),
+    ("stock Windows value",
+     "A well-known variable such as %COMSPEC% was given its standard Windows "
+     "value, since commands are often sliced out of it. Marked as assumed."),
+    ("computed member access",
+     "obj['name'] was rewritten as obj.name, the same property written so that "
+     "the name never appears as an identifier."),
 ]
 
 

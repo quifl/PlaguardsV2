@@ -11,7 +11,7 @@ from __future__ import annotations
 import io
 import zipfile
 
-from . import PlagFilter
+from . import PlagEncode, PlagFilter
 
 # Ceilings for one submission. Generous enough for a real folder of samples,
 # still bounded so a crafted archive cannot exhaust memory or disk.
@@ -88,7 +88,7 @@ def extract_zip(data: bytes, budget: int | None = None,
             continue
 
         total += len(raw)
-        text = raw.decode("utf-8", errors="replace")
+        text = PlagEncode.decode_script(raw)
         if text.strip():
             results.append((name, text))
         else:
@@ -138,7 +138,7 @@ def collect(uploads) -> tuple[list[tuple[str, str]], list[str]]:
             break
 
         total += len(raw)
-        text = raw.decode("utf-8", errors="replace")
+        text = PlagEncode.decode_script(raw)
         if text.strip():
             results.append((name, text))
         else:

@@ -90,9 +90,10 @@ def scan_statements(text: str) -> list[tuple[str, str]]:
     return statements
 
 
-def walk(text: str):
+def walk(text: str, initial: dict | None = None):
     """Step through the statements, keeping variable state as the script
-    would.
+    would, starting from `initial` (the caller's variables, for a script
+    that runs in its caller's scope).
 
     Yields `(statement, name, value, variables, separator)` per statement:
     `name`/`value` are set for an assignment we could resolve and None
@@ -101,7 +102,7 @@ def walk(text: str):
     so the readable script and the resolved-variables table can never
     disagree about what a value was at a given point.
     """
-    variables: dict = {}
+    variables: dict = dict(initial) if initial else {}
 
     for statement, separator in scan_statements(text)[:MAX_STATEMENTS]:
         if not statement:
@@ -136,14 +137,14 @@ def walk(text: str):
         yield statement, None, None, variables, separator
 
 
-def trace(text: str) -> TraceResult:
+def trace(text: str, initial: dict | None = None) -> TraceResult:
     """Resolve as many variables as possible, and collect any fully
     resolved double-quoted strings (these often contain the payload's real
     output, e.g. a Write-Host summary listing every C2 value)."""
     result = TraceResult()
-    variables: dict = {}
+    variables: dict = dict(initial) if initial else {}
 
-    for statement, name, _value, variables, _sep in walk(text):
+    for statement, name, _value, variables, _sep in walk(text, initial):
         if name is None and not _ASSIGN_RE.match(statement) \
                 and not _ARRAY_REVERSE_RE.match(statement):
             _collect_revealed(statement, variables, result)
